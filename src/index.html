@@ -8,49 +8,82 @@
     <script type="module" src="/main.js" defer></script>
   </head>
   <body>
-    <div class="sheet rim" id="sheet" data-collapsed="false">
+    <div class="sheet rim" id="sheet">
       <div id="bg"></div>
 
+      <!-- ===== SIDEBAR ===== -->
       <aside class="sidebar" data-drag>
-        <div class="sb-top">
-          <button id="collapse" class="icon-btn" title="Toggle sidebar" aria-label="Toggle sidebar">
-            <svg class="ic chev" viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6" /></svg>
-          </button>
-          <span class="brand">Aquatica</span>
-        </div>
+        <div class="sb-top"><span class="brand">Aquatica</span></div>
 
         <nav>
-          <button class="nav-item active" data-view="search" title="Search">
+          <button class="nav-item active" data-view="home">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5v8a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19z" /></svg>
+            <span>Home</span>
+          </button>
+          <button class="nav-item" data-view="search">
             <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4-4" /></svg>
             <span>Search</span>
           </button>
 
           <div class="nav-label">Library</div>
 
-          <button class="nav-item" data-view="liked" title="Liked tracks">
+          <button class="nav-item" data-view="liked">
             <svg class="ic" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" /></svg>
             <span>Liked tracks</span>
           </button>
-          <button class="nav-item" data-view="playlists" title="Playlists">
+          <button class="nav-item" data-view="playlists">
             <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7" /><circle cx="18" cy="17" r="2.5" /></svg>
             <span>Playlists</span>
           </button>
         </nav>
+
+        <div class="sb-bottom">
+          <button class="nav-item" data-view="settings">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M5 7h9M19 7h0M5 17h0M10 17h9" /><circle cx="16.5" cy="7" r="2.3" /><circle cx="7.5" cy="17" r="2.3" /></svg>
+            <span>Settings</span>
+          </button>
+        </div>
       </aside>
 
+      <!-- ===== MAIN PANEL ===== -->
       <main class="main" id="main">
         <div class="topbar" data-drag></div>
 
-        <section class="view" id="view-search">
+        <!-- HOME -->
+        <section class="view" id="view-home">
+          <div class="scroller">
+            <h1 class="greeting" id="greeting"></h1>
+
+            <div id="recent-wrap" hidden>
+              <div class="section-label">Recently played</div>
+              <div class="cards row" id="recent"></div>
+            </div>
+
+            <div class="section-head">
+              <div class="section-label">Charts</div>
+              <div class="seg" id="kind-seg">
+                <button data-v="trending" class="on">New &amp; hot</button>
+                <button data-v="top">Top 50</button>
+              </div>
+            </div>
+            <div class="chips" id="chips"></div>
+            <div class="inline-status" id="home-status"></div>
+            <div class="cards grid" id="charts"></div>
+          </div>
+        </section>
+
+        <!-- SEARCH -->
+        <section class="view" id="view-search" hidden>
           <form id="search-form">
             <svg class="ic dim" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4-4" /></svg>
             <input id="search-input" placeholder="Search SoundCloud" autocomplete="off" spellcheck="false" />
           </form>
           <div id="status">Search for tracks, artists and mixes</div>
           <div class="section-label" id="results-label" hidden>Results</div>
-          <ul id="results"></ul>
+          <ul id="results" class="scroller list"></ul>
         </section>
 
+        <!-- LIKED -->
         <section class="view" id="view-liked" hidden>
           <div class="empty">
             <h2>Liked tracks</h2>
@@ -60,6 +93,7 @@
           </div>
         </section>
 
+        <!-- PLAYLISTS -->
         <section class="view" id="view-playlists" hidden>
           <div class="empty">
             <h2>Playlists</h2>
@@ -67,13 +101,85 @@
           </div>
         </section>
 
-        <footer class="player rim" id="player" hidden data-playing="false">
-          <div class="p-top">
-            <img id="np-art" class="art" alt="" />
-            <div class="np-text">
-              <div id="np-title" class="title"></div>
-              <div id="np-artist" class="artist"></div>
+        <!-- SETTINGS -->
+        <section class="view" id="view-settings" hidden>
+          <div class="scroller">
+            <h1 class="greeting">Settings</h1>
+
+            <div class="section-label">Appearance</div>
+            <div class="group">
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Colorful artwork</div>
+                  <div class="set-desc">Off makes all artwork monochrome.</div>
+                </div>
+                <button class="switch" id="set-color" role="switch" aria-checked="true"><i></i></button>
+              </div>
+
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Background</div>
+                  <div class="set-desc">Follow the playing track, keep a pinned artwork, or use a solid color.</div>
+                </div>
+                <div class="seg" id="set-bgmode">
+                  <button data-v="follow">Follow</button>
+                  <button data-v="pinned">Pinned</button>
+                  <button data-v="off">Off</button>
+                </div>
+              </div>
+
+              <div class="set-row" id="color-row" hidden>
+                <div class="grow">
+                  <div class="set-title">Background color</div>
+                  <div class="set-desc" id="color-hex"></div>
+                </div>
+                <div class="picker">
+                  <div class="wheel" id="wheel"><i id="wheel-dot"></i></div>
+                  <input id="wheel-v" class="rng thumb" type="range" min="0" max="100" step="1" aria-label="Brightness" />
+                </div>
+              </div>
+
+              <div class="set-row">
+                <img id="pin-art" class="art" alt="" hidden />
+                <div class="grow">
+                  <div class="set-title" id="pin-title"></div>
+                  <div class="set-desc" id="pin-desc"></div>
+                </div>
+                <button class="btn-ghost" id="unpin" hidden>Unpin</button>
+              </div>
             </div>
+
+            <div class="section-label">Performance</div>
+            <div class="group">
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Lightweight mode</div>
+                  <div class="set-desc">Cheap background instead of the blur, and no animations. Helps on older GPUs.</div>
+                </div>
+                <button class="switch" id="set-light" role="switch" aria-checked="false"><i></i></button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ===== RIGHT COLUMN (always visible) ===== -->
+      <aside class="np-panel" id="np-panel">
+        <div class="topbar" data-drag></div>
+
+        <div class="np-empty" id="np-empty">
+          <div class="np-empty-title">Nothing playing</div>
+          <div class="np-empty-sub">Pick a track and it shows up here.</div>
+        </div>
+
+        <div class="np-content" id="np-content" hidden>
+          <img id="np-big" class="np-big" alt="" />
+          <div class="np-meta">
+            <div id="np-big-title" class="np-big-title"></div>
+            <div id="np-big-artist" class="np-big-artist"></div>
+          </div>
+
+          <div class="player" id="player" data-playing="false">
             <div class="controls">
               <button id="prev" class="ctl" aria-label="Previous">
                 <svg class="fill" viewBox="0 0 24 24"><rect x="5" y="5" width="2.5" height="14" rx="1" /><path d="M19 5.8v12.4L9.5 12z" /></svg>
@@ -85,22 +191,23 @@
               <button id="next" class="ctl" aria-label="Next">
                 <svg class="fill" viewBox="0 0 24 24"><rect x="16.5" y="5" width="2.5" height="14" rx="1" /><path d="M5 5.8v12.4L14.5 12z" /></svg>
               </button>
+              <button id="pin" class="ctl pin" aria-label="Pin background" title="Pin this artwork as the background">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M9 4h6l-.8 5.2L17 12v1.5H7V12l2.8-2.8z" /><path d="M12 13.5V20" /></svg>
+              </button>
+            </div>
+            <div class="p-seek">
+              <span id="t-cur">0:00</span>
+              <input id="seek" class="rng" type="range" min="0" max="1000" value="0" step="1" />
+              <span id="t-dur">0:00</span>
             </div>
           </div>
-          <div class="p-seek">
-            <span id="t-cur">0:00</span>
-            <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
-            <span id="t-dur">0:00</span>
-          </div>
-        </footer>
-      </main>
 
-      <aside class="np-panel" data-drag>
-        <img id="np-big" class="np-big" alt="" hidden />
-        <div id="np-big-title" class="np-big-title"></div>
-        <div id="np-big-artist" class="np-big-artist"></div>
+          <div class="section-label" id="related-label" hidden>Suggested</div>
+          <ul id="related" class="list"></ul>
+        </div>
       </aside>
 
+      <!-- ===== WINDOW BUTTONS ===== -->
       <div class="winctl">
         <button id="w-min" aria-label="Minimize">
           <svg class="ic" viewBox="0 0 24 24"><path d="M6 12h12" /></svg>
@@ -112,6 +219,8 @@
           <svg class="ic" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" /></svg>
         </button>
       </div>
+
+      <div id="toast" class="toast" hidden></div>
     </div>
   </body>
 </html>

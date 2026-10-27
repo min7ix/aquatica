@@ -2,18 +2,24 @@ use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
-use std::time::Duration;
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::{Manager, State};
 
 const SOCK: &str = "/tmp/aquatica-mpv.sock";
+const API: &str = "https://api-v2.soundcloud.com";
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+
+// remembers which charts request form last worked
+static CHART_VARIANT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Track {
+    id: u64,
     title: String,
     artist: String,
     duration: Option<f64>,
@@ -24,8 +30,9 @@ struct Track {
 
 struct Player(Mutex<Option<Child>>);
 
-// Talks to SoundCloud's web API directly. The "client id" is a public key the
-// website itself uses; we read it from the site once and reuse it.
+// ---------- SoundCloud web API ----------
+// The "client id" is a public key the website itself uses; we read it from
+// the site once and reuse it.
 struct Sc {
     http: reqwest::Client,
     client_id: Mutex<Option<String>>,
@@ -133,40 +140,95 @@ fn pick_stream(media: &Value) -> Option<String> {
     hls
 }
 
+fn parse_track(t: &Value) -> Option<Track> {
+    Some(Track {
+        id: t["id"].as_u64()?,
+        title: t["title"].as_str()?.to_string(),
+        artist: t["user"]["username"].as_str().unwrap_or("Unknown").to_string(),
+        duration: t["duration"].as_f64().map(|ms| ms / 1000.0),
+        artwork: t["artwork_url"]
+            .as_str()
+            .or_else(|| t["user"]["avatar_url"].as_str())
+            .map(|u| u.replace("-large", "-t300x300")),
+        stream_api: pick_stream(&t["media"])?,
+        auth: t["track_authorization"].as_str()?.to_string(),
+    })
+}
+
+fn parse_tracks(list: &Value) -> Vec<Track> {
+    list.as_array()
+        .map(|items| items.iter().filter_map(parse_track).collect())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 async fn search(query: String, sc: State<'_, Sc>) -> Result<Vec<Track>, String> {
     let v = sc
         .get_json(
-            "https://api-v2.soundcloud.com/search/tracks",
+            &format!("{API}/search/tracks"),
             &[("q", query.as_str()), ("limit", "25")],
         )
         .await?;
-
-    let tracks: Vec<Track> = v["collection"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|t| {
-                    Some(Track {
-                        title: t["title"].as_str()?.to_string(),
-                        artist: t["user"]["username"].as_str().unwrap_or("Unknown").to_string(),
-                        duration: t["duration"].as_f64().map(|ms| ms / 1000.0),
-                        artwork: t["artwork_url"]
-                            .as_str()
-                            .or_else(|| t["user"]["avatar_url"].as_str())
-                            .map(|u| u.replace("-large", "-t300x300")),
-                        stream_api: pick_stream(&t["media"])?,
-                        auth: t["track_authorization"].as_str()?.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
-    Ok(tracks)
+    Ok(parse_tracks(&v["collection"]))
 }
 
+// "Suggested" tracks for the right column
+#[tauri::command]
+async fn related(id: u64, sc: State<'_, Sc>) -> Result<Vec<Track>, String> {
+    let v = sc
+        .get_json(&format!("{API}/tracks/{id}/related"), &[("limit", "8")])
+        .await?;
+    Ok(parse_tracks(&v["collection"]))
+}
+
+// Home page charts. kind: "trending" or "top"; genre: e.g. "all-music".
+// SoundCloud's charts endpoint is picky and has changed over time, so we try
+// three request forms and remember whichever one worked last.
+#[tauri::command]
+async fn charts(kind: String, genre: String, sc: State<'_, Sc>) -> Result<Vec<Track>, String> {
+    let genre_id = format!("soundcloud:genres:{genre}");
+    let url = format!("{API}/charts");
+    let start = CHART_VARIANT.load(Ordering::Relaxed);
+    let mut last_err = String::from("no response");
+
+    for n in 0..3usize {
+        let variant = (start + n) % 3;
+        let mut params: Vec<(&str, &str)> = vec![
+            ("kind", kind.as_str()),
+            ("genre", genre_id.as_str()),
+            ("limit", "24"),
+        ];
+        match variant {
+            1 => params.push(("high_tier_only", "false")),
+            2 => {
+                params.push(("high_tier_only", "false"));
+                params.push(("region", "soundcloud:regions:US"));
+            }
+            _ => {}
+        }
+        match sc.get_json(&url, &params).await {
+            Ok(v) => {
+                let tracks: Vec<Track> = v["collection"]
+                    .as_array()
+                    .map(|items| items.iter().filter_map(|i| parse_track(&i["track"])).collect())
+                    .unwrap_or_default();
+                CHART_VARIANT.store(variant, Ordering::Relaxed);
+                return Ok(tracks);
+            }
+            Err(e) => last_err = e,
+        }
+    }
+    Err(format!("{last_err} (charts: {kind} / {genre})"))
+}
+
+// Fresh stream info for a track we only know the id of (recently played)
+#[tauri::command]
+async fn get_track(id: u64, sc: State<'_, Sc>) -> Result<Track, String> {
+    let v = sc.get_json(&format!("{API}/tracks/{id}"), &[]).await?;
+    parse_track(&v).ok_or_else(|| "that track can't be played".to_string())
+}
+
+// ---------- playback (mpv) ----------
 #[tauri::command]
 async fn play(
     stream_api: String,
@@ -301,6 +363,7 @@ fn seek(seconds: f64) -> Result<(), String> {
     ))
 }
 
+// ---------- window (we draw our own frame) ----------
 #[tauri::command]
 fn start_drag(window: tauri::WebviewWindow) {
     let _ = window.start_dragging();
@@ -325,12 +388,13 @@ fn win_close(window: tauri::WebviewWindow) {
     let _ = window.close();
 }
 
+// ---------- app ----------
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(Player(Mutex::new(None)))
         .manage(Sc::new())
-                .on_window_event(|window, event| {
+        .on_window_event(|window, event| {
             // stop mpv when the window goes away
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(mut c) = window.state::<Player>().0.lock().unwrap().take() {
@@ -340,7 +404,7 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // fetch the client id in the background so the first search is fast
+            // fetch the client id in the background so the first request is fast
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let sc = handle.state::<Sc>();
@@ -348,7 +412,10 @@ pub fn run() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![search, play, toggle_pause, stop, player_state, seek, start_drag, win_minimize, win_toggle_max, win_close])
+        .invoke_handler(tauri::generate_handler![
+            search, related, charts, get_track, play, toggle_pause, stop,
+            player_state, seek, start_drag, win_minimize, win_toggle_max, win_close
+        ])
         .run(tauri::generate_context!())
         .expect("error while running Aquatica");
 }

@@ -11,10 +11,10 @@
     "windows": [
       {
         "title": "aquatica",
-        "width": 1000,
-        "height": 680,
-        "minWidth": 560,
-        "minHeight": 420,
+        "width": 960,
+        "height": 740,
+        "minWidth": 840,
+        "minHeight": 520,
         "decorations": false,
         "transparent": true
       }
