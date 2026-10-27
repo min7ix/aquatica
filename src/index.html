@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aquatica</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/main.js" defer></script>
+  </head>
+  <body>
+    <div class="sheet rim" id="sheet" data-collapsed="false">
+      <div id="bg"></div>
+
+      <aside class="sidebar" data-drag>
+        <div class="sb-top">
+          <button id="collapse" class="icon-btn" title="Toggle sidebar" aria-label="Toggle sidebar">
+            <svg class="ic chev" viewBox="0 0 24 24"><path d="M6 6l6 6-6 6M13 6l6 6-6 6" /></svg>
+          </button>
+          <span class="brand">Aquatica</span>
+        </div>
+
+        <nav>
+          <button class="nav-item active" data-view="search" title="Search">
+            <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4-4" /></svg>
+            <span>Search</span>
+          </button>
+
+          <div class="nav-label">Library</div>
+
+          <button class="nav-item" data-view="liked" title="Liked tracks">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" /></svg>
+            <span>Liked tracks</span>
+          </button>
+          <button class="nav-item" data-view="playlists" title="Playlists">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7" /><circle cx="18" cy="17" r="2.5" /></svg>
+            <span>Playlists</span>
+          </button>
+        </nav>
+      </aside>
+
+      <main class="main" id="main">
+        <div class="topbar" data-drag></div>
+
+        <section class="view" id="view-search">
+          <form id="search-form">
+            <svg class="ic dim" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4-4" /></svg>
+            <input id="search-input" placeholder="Search SoundCloud" autocomplete="off" spellcheck="false" />
+          </form>
+          <div id="status">Search for tracks, artists and mixes</div>
+          <div class="section-label" id="results-label" hidden>Results</div>
+          <ul id="results"></ul>
+        </section>
+
+        <section class="view" id="view-liked" hidden>
+          <div class="empty">
+            <h2>Liked tracks</h2>
+            <p>Your SoundCloud likes will show up here.</p>
+            <button class="btn-white" id="login-btn">Log in with SoundCloud</button>
+            <p class="note" id="login-note"></p>
+          </div>
+        </section>
+
+        <section class="view" id="view-playlists" hidden>
+          <div class="empty">
+            <h2>Playlists</h2>
+            <p>Your playlists will show up here.</p>
+          </div>
+        </section>
+
+        <footer class="player rim" id="player" hidden data-playing="false">
+          <div class="p-top">
+            <img id="np-art" class="art" alt="" />
+            <div class="np-text">
+              <div id="np-title" class="title"></div>
+              <div id="np-artist" class="artist"></div>
+            </div>
+            <div class="controls">
+              <button id="prev" class="ctl" aria-label="Previous">
+                <svg class="fill" viewBox="0 0 24 24"><rect x="5" y="5" width="2.5" height="14" rx="1" /><path d="M19 5.8v12.4L9.5 12z" /></svg>
+              </button>
+              <button id="toggle" class="ctl primary" aria-label="Play / pause">
+                <svg class="fill i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" /></svg>
+                <svg class="fill i-pause" viewBox="0 0 24 24"><rect x="6.5" y="5" width="4" height="14" rx="1.2" /><rect x="13.5" y="5" width="4" height="14" rx="1.2" /></svg>
+              </button>
+              <button id="next" class="ctl" aria-label="Next">
+                <svg class="fill" viewBox="0 0 24 24"><rect x="16.5" y="5" width="2.5" height="14" rx="1" /><path d="M5 5.8v12.4L14.5 12z" /></svg>
+              </button>
+            </div>
+          </div>
+          <div class="p-seek">
+            <span id="t-cur">0:00</span>
+            <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
+            <span id="t-dur">0:00</span>
+          </div>
+        </footer>
+      </main>
+
+      <aside class="np-panel" data-drag>
+        <img id="np-big" class="np-big" alt="" hidden />
+        <div id="np-big-title" class="np-big-title"></div>
+        <div id="np-big-artist" class="np-big-artist"></div>
+      </aside>
+
+      <div class="winctl">
+        <button id="w-min" aria-label="Minimize">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M6 12h12" /></svg>
+        </button>
+        <button id="w-max" aria-label="Maximize">
+          <svg class="ic" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" /></svg>
+        </button>
+        <button id="w-close" aria-label="Close">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17" /></svg>
+        </button>
+      </div>
+    </div>
+  </body>
+</html>
