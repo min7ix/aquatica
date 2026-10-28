@@ -11,6 +11,9 @@
     <div class="sheet rim" id="sheet">
       <div id="bg"></div>
 
+      <!-- drag area above the panels; the window buttons live here -->
+      <div class="dragstrip" data-drag></div>
+
       <!-- ===== SIDEBAR ===== -->
       <aside class="sidebar" data-drag>
         <div class="sb-top"><span class="brand">Aquatica</span></div>
@@ -59,16 +62,23 @@
               <div class="cards row" id="recent"></div>
             </div>
 
-            <div class="section-head">
-              <div class="section-label">Charts</div>
-              <div class="seg" id="kind-seg">
-                <button data-v="trending" class="on">New &amp; hot</button>
-                <button data-v="top">Top 50</button>
+            <div id="playlists-wrap" hidden>
+              <div class="section-head">
+                <div class="section-label">Playlists</div>
+                <button class="link-btn" id="playlists-all">See all</button>
               </div>
+              <div class="cards grid" id="playlists-grid"></div>
             </div>
-            <div class="chips" id="chips"></div>
-            <div class="inline-status" id="home-status"></div>
-            <div class="cards grid" id="charts"></div>
+
+            <div id="liked-wrap" hidden>
+              <div class="section-head">
+                <div class="section-label">Liked songs</div>
+                <button class="link-btn" id="liked-all">See all</button>
+              </div>
+              <div class="cards grid" id="liked-grid"></div>
+            </div>
+
+            <div class="inline-status" id="home-empty"></div>
           </div>
         </section>
 
@@ -85,19 +95,38 @@
 
         <!-- LIKED -->
         <section class="view" id="view-liked" hidden>
-          <div class="empty">
-            <h2>Liked tracks</h2>
-            <p>Your SoundCloud likes will show up here.</p>
-            <button class="btn-white" id="login-btn">Log in with SoundCloud</button>
-            <p class="note" id="login-note"></p>
+          <div class="scroller">
+            <h1 class="greeting">Liked tracks</h1>
+            <div class="inline-status" id="liked-status"></div>
+            <ul id="liked-list" class="list"></ul>
           </div>
         </section>
 
         <!-- PLAYLISTS -->
         <section class="view" id="view-playlists" hidden>
-          <div class="empty">
-            <h2>Playlists</h2>
-            <p>Your playlists will show up here.</p>
+          <div class="scroller">
+            <div class="section-head">
+              <h1 class="greeting">Playlists</h1>
+              <button class="btn-solid" id="pl-new">New playlist</button>
+            </div>
+            <div class="inline-status" id="pl-empty"></div>
+            <ul id="pl-all" class="list"></ul>
+          </div>
+        </section>
+
+        <!-- ONE PLAYLIST -->
+        <section class="view" id="view-playlist" hidden>
+          <div class="scroller">
+            <button class="link-btn back" id="pl-back">&larr; Playlists</button>
+            <h1 class="greeting" id="pl-name"></h1>
+            <div class="pl-meta" id="pl-meta"></div>
+            <div class="pl-actions">
+              <button class="btn-solid" id="pl-play">Play</button>
+              <button class="btn-ghost" id="pl-rename">Rename</button>
+              <button class="btn-ghost" id="pl-delete">Delete</button>
+            </div>
+            <div class="inline-status" id="pl-status"></div>
+            <ul id="pl-list" class="list"></ul>
           </div>
         </section>
 
@@ -149,6 +178,21 @@
               </div>
             </div>
 
+            <div class="section-label">Interface</div>
+            <div class="group">
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Zoom</div>
+                  <div class="set-desc">Scale the whole app. Click the percentage to reset.</div>
+                </div>
+                <div class="stepper">
+                  <button id="zoom-out" aria-label="Zoom out">&minus;</button>
+                  <button id="zoom-val" class="val" aria-label="Reset zoom">100%</button>
+                  <button id="zoom-in" aria-label="Zoom in">+</button>
+                </div>
+              </div>
+            </div>
+
             <div class="section-label">Performance</div>
             <div class="group">
               <div class="set-row">
@@ -181,6 +225,9 @@
 
           <div class="player" id="player" data-playing="false">
             <div class="controls">
+              <button id="like" class="ctl like" aria-label="Like" aria-pressed="false" title="Add to liked tracks">
+                <svg class="ic" viewBox="0 0 24 24"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z" /></svg>
+              </button>
               <button id="prev" class="ctl" aria-label="Previous">
                 <svg class="fill" viewBox="0 0 24 24"><rect x="5" y="5" width="2.5" height="14" rx="1" /><path d="M19 5.8v12.4L9.5 12z" /></svg>
               </button>
@@ -191,8 +238,8 @@
               <button id="next" class="ctl" aria-label="Next">
                 <svg class="fill" viewBox="0 0 24 24"><rect x="16.5" y="5" width="2.5" height="14" rx="1" /><path d="M5 5.8v12.4L14.5 12z" /></svg>
               </button>
-              <button id="pin" class="ctl pin" aria-label="Pin background" title="Pin this artwork as the background">
-                <svg class="ic" viewBox="0 0 24 24"><path d="M9 4h6l-.8 5.2L17 12v1.5H7V12l2.8-2.8z" /><path d="M12 13.5V20" /></svg>
+              <button id="more" class="ctl more" aria-label="More" title="More">
+                <svg class="fill" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="18.5" cy="12" r="1.8" /></svg>
               </button>
             </div>
             <div class="p-seek">
@@ -221,7 +268,21 @@
       </div>
 
       <div id="toast" class="toast" hidden></div>
+
+      <!-- popup menu (player ... button, right-click, hover ... on rows) -->
+      <div id="menu" class="menu" hidden></div>
+
+      <!-- name dialog (new / rename playlist) -->
+      <div id="name-modal" class="modal" hidden>
+        <form id="name-form" class="dialog" autocomplete="off">
+          <div id="name-title" class="dialog-title">New playlist</div>
+          <input id="name-input" type="text" maxlength="60" placeholder="Playlist name" spellcheck="false" />
+          <div class="dialog-actions">
+            <button type="button" class="btn-ghost" id="name-cancel">Cancel</button>
+            <button type="submit" class="btn-solid" id="name-ok">Create</button>
+          </div>
+        </form>
+      </div>
     </div>
   </body>
 </html>
-

@@ -4,7 +4,6 @@ use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{Manager, State};
@@ -12,9 +11,6 @@ use tauri::{Manager, State};
 const SOCK: &str = "/tmp/aquatica-mpv.sock";
 const API: &str = "https://api-v2.soundcloud.com";
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-
-// remembers which charts request form last worked
-static CHART_VARIANT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -181,47 +177,7 @@ async fn related(id: u64, sc: State<'_, Sc>) -> Result<Vec<Track>, String> {
     Ok(parse_tracks(&v["collection"]))
 }
 
-// Home page charts. kind: "trending" or "top"; genre: e.g. "all-music".
-// SoundCloud's charts endpoint is picky and has changed over time, so we try
-// three request forms and remember whichever one worked last.
-#[tauri::command]
-async fn charts(kind: String, genre: String, sc: State<'_, Sc>) -> Result<Vec<Track>, String> {
-    let genre_id = format!("soundcloud:genres:{genre}");
-    let url = format!("{API}/charts");
-    let start = CHART_VARIANT.load(Ordering::Relaxed);
-    let mut last_err = String::from("no response");
-
-    for n in 0..3usize {
-        let variant = (start + n) % 3;
-        let mut params: Vec<(&str, &str)> = vec![
-            ("kind", kind.as_str()),
-            ("genre", genre_id.as_str()),
-            ("limit", "24"),
-        ];
-        match variant {
-            1 => params.push(("high_tier_only", "false")),
-            2 => {
-                params.push(("high_tier_only", "false"));
-                params.push(("region", "soundcloud:regions:US"));
-            }
-            _ => {}
-        }
-        match sc.get_json(&url, &params).await {
-            Ok(v) => {
-                let tracks: Vec<Track> = v["collection"]
-                    .as_array()
-                    .map(|items| items.iter().filter_map(|i| parse_track(&i["track"])).collect())
-                    .unwrap_or_default();
-                CHART_VARIANT.store(variant, Ordering::Relaxed);
-                return Ok(tracks);
-            }
-            Err(e) => last_err = e,
-        }
-    }
-    Err(format!("{last_err} (charts: {kind} / {genre})"))
-}
-
-// Fresh stream info for a track we only know the id of (recently played)
+// Fresh stream info for a track we only know the id of (recently played, liked)
 #[tauri::command]
 async fn get_track(id: u64, sc: State<'_, Sc>) -> Result<Track, String> {
     let v = sc.get_json(&format!("{API}/tracks/{id}"), &[]).await?;
@@ -388,6 +344,12 @@ fn win_close(window: tauri::WebviewWindow) {
     let _ = window.close();
 }
 
+// Interface zoom from the Settings page (1.0 = 100%)
+#[tauri::command]
+fn set_zoom(window: tauri::WebviewWindow, factor: f64) {
+    let _ = window.set_zoom(factor.clamp(0.5, 2.0));
+}
+
 // ---------- app ----------
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -413,10 +375,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            search, related, charts, get_track, play, toggle_pause, stop,
-            player_state, seek, start_drag, win_minimize, win_toggle_max, win_close
+            search, related, get_track, play, toggle_pause, stop,
+            player_state, seek, start_drag, win_minimize, win_toggle_max, win_close,
+            set_zoom
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquatica");
 }
-

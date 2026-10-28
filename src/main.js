@@ -27,9 +27,17 @@ const statusEl = $("status");
 const resultsLabel = $("results-label");
 const results = $("results");
 const recentEl = $("recent");
-const chartsEl = $("charts");
-const chipsEl = $("chips");
-const homeStatus = $("home-status");
+const likedWrap = $("liked-wrap");
+const likedGrid = $("liked-grid");
+const likedList = $("liked-list");
+const likedStatus = $("liked-status");
+const plWrap = $("playlists-wrap");
+const plGrid = $("playlists-grid");
+const plAll = $("pl-all");
+const plEmpty = $("pl-empty");
+const plList = $("pl-list");
+const plStatus = $("pl-status");
+const homeEmpty = $("home-empty");
 const relList = $("related");
 const relLabel = $("related-label");
 const npEmpty = $("np-empty");
@@ -40,20 +48,20 @@ const bigArtist = $("np-big-artist");
 const seek = $("seek");
 const tCur = $("t-cur");
 const tDur = $("t-dur");
-const pinBtn = $("pin");
+const likeBtn = $("like");
+const moreBtn = $("more");
+const menuEl = $("menu");
+const nameModal = $("name-modal");
+const nameInput = $("name-input");
 
 const HINT = "Search for tracks, artists and mixes";
-const GENRES = [
-  ["all-music", "All music"],
-  ["hiphoprap", "Hip-hop & Rap"],
-  ["electronic", "Electronic"],
-  ["pop", "Pop"],
-  ["rock", "Rock"],
-  ["ambient", "Ambient"],
-];
+const DOTS =
+  '<svg class="fill" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="18.5" cy="12" r="1.8" /></svg>';
 
 const tiny = (u) => u.replace("-t300x300", "-t67x67"); // cheap, stretched = soft
 const big = (u) => u.replace("-t300x300", "-t500x500");
+// the small version of a track we keep in local storage (stream info is fetched fresh on play)
+const slim = (t) => ({ id: t.id, title: t.title, artist: t.artist, artwork: t.artwork, duration: t.duration });
 
 function fmt(sec) {
   if (!sec || sec < 0) return "0:00";
@@ -84,16 +92,40 @@ $("w-min").addEventListener("click", () => invoke("win_minimize"));
 $("w-max").addEventListener("click", () => invoke("win_toggle_max"));
 $("w-close").addEventListener("click", () => invoke("win_close"));
 
+/* ---------- no accidental zoom (zoom lives in Settings now) ---------- */
+window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false, capture: true });
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && ["+", "=", "-", "_", "0"].includes(e.key)) e.preventDefault();
+}, true);
+document.addEventListener("gesturestart", (e) => e.preventDefault());
+
+/* ---------- scrollbars only show while something is scrolling ---------- */
+const scrollTimers = new WeakMap();
+document.addEventListener(
+  "scroll",
+  (e) => {
+    const el = e.target;
+    if (!(el instanceof Element)) return;
+    el.classList.add("scrolling");
+    clearTimeout(scrollTimers.get(el));
+    scrollTimers.set(el, setTimeout(() => el.classList.remove("scrolling"), 900));
+  },
+  true
+);
+
 /* ---------- settings ---------- */
+const ZOOMS = [0.8, 0.9, 1, 1.1, 1.25, 1.5];
 const DEFAULTS = {
   color: true,
   bgMode: "follow",
   light: false,
   pinned: null,
+  zoom: 1,
   bgColor: { h: 235, s: 0.12, v: 0.14 },
 };
 let settings = { ...DEFAULTS, ...store.get("aq-settings", {}) };
 settings.bgColor = { ...DEFAULTS.bgColor, ...settings.bgColor };
+if (!ZOOMS.includes(settings.zoom)) settings.zoom = 1;
 let currentArt = null; // artwork of the playing track
 let current = null; // the playing track
 
@@ -119,12 +151,6 @@ function isPinnedNow() {
   );
 }
 
-function updatePinButton() {
-  const on = isPinnedNow();
-  pinBtn.classList.toggle("on", on);
-  pinBtn.title = on ? "Unpin background" : "Pin this artwork as the background";
-}
-
 function hsv2hex(h, s, v) {
   const f = (n) => {
     const k = (n + h / 60) % 6;
@@ -144,6 +170,11 @@ function applySettings() {
   document.querySelectorAll("#set-bgmode button").forEach((b) =>
     b.classList.toggle("on", b.dataset.v === settings.bgMode)
   );
+
+  // zoom label + stepper limits
+  $("zoom-val").textContent = `${Math.round(settings.zoom * 100)}%`;
+  $("zoom-out").disabled = settings.zoom <= ZOOMS[0];
+  $("zoom-in").disabled = settings.zoom >= ZOOMS[ZOOMS.length - 1];
 
   // solid color (only used when Background = Off)
   const c = settings.bgColor;
@@ -167,12 +198,33 @@ function applySettings() {
   $("pin-title").textContent = p ? p.title : "Nothing pinned";
   $("pin-desc").textContent = p
     ? "This artwork stays behind the player whatever is playing."
-    : "Use the pin button in the player to keep a track's artwork as your background.";
+    : "Open the \u22EF menu in the player and choose Pin as background to keep a track's artwork.";
   $("unpin").hidden = !p;
 
   updateBackground();
-  updatePinButton();
 }
+
+// zoom is applied by the native webview (see set_zoom in lib.rs)
+function applyZoom(report) {
+  invoke("set_zoom", { factor: settings.zoom }).catch((err) => {
+    if (report) toast(`Zoom failed: ${err}`);
+  });
+}
+function setZoom(z) {
+  settings.zoom = z;
+  store.set("aq-settings", settings);
+  applySettings();
+  applyZoom(true);
+}
+function stepZoom(dir) {
+  let i = ZOOMS.findIndex((z) => z >= settings.zoom - 0.001);
+  if (i < 0) i = ZOOMS.length - 1;
+  i = Math.max(0, Math.min(ZOOMS.length - 1, i + dir));
+  setZoom(ZOOMS[i]);
+}
+$("zoom-out").addEventListener("click", () => stepZoom(-1));
+$("zoom-in").addEventListener("click", () => stepZoom(1));
+$("zoom-val").addEventListener("click", () => setZoom(1));
 
 $("set-color").addEventListener("click", () => {
   settings.color = !settings.color;
@@ -188,7 +240,7 @@ $("set-bgmode").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.v === "pinned" && !settings.pinned) {
-    toast("Pin an artwork first with the pin button in the player");
+    toast("Pin an artwork first from the \u22EF menu in the player");
     return;
   }
   settings.bgMode = b.dataset.v;
@@ -201,7 +253,7 @@ $("unpin").addEventListener("click", () => {
   store.set("aq-settings", settings);
   applySettings();
 });
-pinBtn.addEventListener("click", () => {
+function togglePin() {
   if (isPinnedNow()) {
     settings.pinned = null;
     settings.bgMode = "follow";
@@ -212,7 +264,7 @@ pinBtn.addEventListener("click", () => {
   }
   store.set("aq-settings", settings);
   applySettings();
-});
+}
 
 /* color wheel (hue = angle, saturation = distance from center) */
 const wheel = $("wheel");
@@ -239,21 +291,157 @@ $("wheel-v").addEventListener("input", (e) => {
 $("wheel-v").addEventListener("change", () => store.set("aq-settings", settings));
 
 /* ---------- views ---------- */
-let chartsLoaded = false;
-
 function showView(name) {
+  closeMenu();
+  const navName = name === "playlist" ? "playlists" : name; // a playlist page lives under Playlists
   document.querySelectorAll(".nav-item").forEach((b) =>
-    b.classList.toggle("active", b.dataset.view === name)
+    b.classList.toggle("active", b.dataset.view === navName)
   );
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${name}`));
   if (name === "search") input.focus();
-  if (name === "home" && !chartsLoaded) loadCharts();
 }
 document.querySelectorAll(".nav-item").forEach((b) =>
   b.addEventListener("click", () => showView(b.dataset.view))
 );
-$("login-btn").addEventListener("click", () => {
-  $("login-note").textContent = "Login arrives in the next step.";
+$("liked-all").addEventListener("click", () => showView("liked"));
+$("playlists-all").addEventListener("click", () => showView("playlists"));
+
+/* ---------- popup menu (⋯ button and right-click) ---------- */
+let menuAnchor = null;
+let menuPos = { x: 0, y: 0 };
+
+function closeMenu() {
+  menuEl.hidden = true;
+  menuEl.replaceChildren();
+  menuAnchor = null;
+}
+
+// items: { label, hint?, danger?, keep?, run } | { sep: true } | { title }
+function openMenu(x, y, items, anchor = null) {
+  menuEl.replaceChildren(
+    ...items.map((it) => {
+      if (it.sep) return make("div", "menu-sep");
+      if (it.title) return make("div", "menu-title", it.title);
+      const b = make("button", it.danger ? "menu-item danger" : "menu-item");
+      b.append(make("span", "grow", it.label));
+      if (it.hint) b.append(make("span", "hint", it.hint));
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!it.keep) closeMenu();
+        it.run();
+      });
+      return b;
+    })
+  );
+  menuAnchor = anchor;
+  menuEl.hidden = false;
+  menuEl.style.left = "0px";
+  menuEl.style.top = "0px";
+  const r = menuEl.getBoundingClientRect();
+  const nx = Math.max(8, Math.min(x, window.innerWidth - r.width - 8));
+  const ny = Math.max(8, Math.min(y, window.innerHeight - r.height - 8));
+  menuEl.style.left = `${nx}px`;
+  menuEl.style.top = `${ny}px`;
+  menuPos = { x: nx, y: ny };
+}
+
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    if (!menuEl.hidden && !e.target.closest("#menu, #more, .row-more")) closeMenu();
+  },
+  true
+);
+document.addEventListener(
+  "scroll",
+  (e) => {
+    if (!menuEl.hidden && !menuEl.contains(e.target)) closeMenu();
+  },
+  true
+);
+window.addEventListener("blur", closeMenu);
+window.addEventListener("resize", closeMenu);
+menuEl.addEventListener("contextmenu", (e) => e.preventDefault());
+
+function openPlaylistPicker(t) {
+  const items = [{ title: "Add to playlist" }];
+  playlists.forEach((pl) => {
+    const has = pl.tracks.some((s) => s.id === t.id);
+    items.push({ label: pl.name, hint: has ? "Added" : "", run: () => addToPlaylist(pl, t) });
+  });
+  if (playlists.length) items.push({ sep: true });
+  items.push({
+    label: "New playlist\u2026",
+    run: () =>
+      askName("New playlist", "Create", "", (name) => {
+        const pl = createPlaylist(name);
+        addToPlaylist(pl, t);
+      }),
+  });
+  openMenu(menuPos.x, menuPos.y, items, menuAnchor);
+}
+
+function openTrackMenu(x, y, t, list, i, playlistId, anchor = null) {
+  const items = [
+    { label: "Play", run: () => playFrom(list, i) },
+    {
+      label: isLiked(t) ? "Remove from liked tracks" : "Add to liked tracks",
+      run: () => toggleLikeFor(t),
+    },
+    { label: "Add to playlist\u2026", keep: true, run: () => openPlaylistPicker(t) },
+  ];
+  if (playlistId) {
+    items.push(
+      { sep: true },
+      { label: "Remove from this playlist", danger: true, run: () => removeFromPlaylist(playlistId, t) }
+    );
+  }
+  openMenu(x, y, items, anchor);
+}
+
+moreBtn.addEventListener("click", () => {
+  if (!current) return;
+  if (!menuEl.hidden && menuAnchor === moreBtn) return closeMenu();
+  const t = current;
+  const r = moreBtn.getBoundingClientRect();
+  openMenu(
+    r.left,
+    r.bottom + 6,
+    [
+      { label: "Add to playlist\u2026", keep: true, run: () => openPlaylistPicker(t) },
+      { label: isPinnedNow() ? "Unpin background" : "Pin as background", run: togglePin },
+    ],
+    moreBtn
+  );
+});
+
+/* ---------- name dialog (new / rename playlist) ---------- */
+let nameDone = null;
+function askName(title, okLabel, initial, done) {
+  closeMenu();
+  $("name-title").textContent = title;
+  $("name-ok").textContent = okLabel;
+  nameInput.value = initial || "";
+  nameDone = done;
+  nameModal.hidden = false;
+  nameInput.focus();
+  nameInput.select();
+}
+function closeName() {
+  nameModal.hidden = true;
+  nameDone = null;
+}
+$("name-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const v = nameInput.value.trim();
+  if (!v) return;
+  const cb = nameDone;
+  closeName();
+  if (cb) cb(v);
+});
+$("name-cancel").addEventListener("click", closeName);
+nameModal.addEventListener("mousedown", (e) => {
+  if (e.target === nameModal) closeName();
 });
 
 /* ---------- building lists ---------- */
@@ -262,7 +450,7 @@ function playFrom(list, i) {
   playAt(i);
 }
 
-function row(t, list, i, compact) {
+function row(t, list, i, compact, playlistId) {
   const li = make("li", compact ? "track compact" : "track");
   li.dataset.id = t.id;
   const img = make("img", "art");
@@ -272,8 +460,24 @@ function row(t, list, i, compact) {
   const info = make("div", "info");
   info.append(make("div", "title", t.title), make("div", "artist", t.artist));
   li.append(img, info);
-  if (!compact) li.append(make("div", "time", t.duration ? fmt(t.duration) : ""));
+  if (!compact) {
+    li.append(make("div", "time", t.duration ? fmt(t.duration) : ""));
+    const more = make("button", "row-more");
+    more.setAttribute("aria-label", "More");
+    more.innerHTML = DOTS;
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!menuEl.hidden && menuAnchor === more) return closeMenu();
+      const r = more.getBoundingClientRect();
+      openTrackMenu(r.left, r.bottom + 4, t, list, i, playlistId, more);
+    });
+    li.append(more);
+  }
   li.addEventListener("click", () => playFrom(list, i));
+  li.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openTrackMenu(e.clientX, e.clientY, t, list, i, playlistId);
+  });
   return li;
 }
 
@@ -286,6 +490,10 @@ function card(t, list, i) {
   if (t.artwork) img.src = t.artwork;
   c.append(img, make("div", "title", t.title), make("div", "artist", t.artist));
   c.addEventListener("click", () => playFrom(list, i));
+  c.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    openTrackMenu(e.clientX, e.clientY, t, list, i, null);
+  });
   return c;
 }
 
@@ -302,65 +510,195 @@ function greet() {
   return h < 5 ? "Good night" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
+function updateHomeEmpty() {
+  homeEmpty.textContent =
+    recents.length || likes.length || playlists.length
+      ? ""
+      : "Search for a track and play it. Your recent and liked tracks will show up here.";
+}
+
 let recents = store.get("aq-recent", []);
 function pushRecent(t) {
-  const slim = { id: t.id, title: t.title, artist: t.artist, artwork: t.artwork, duration: t.duration };
-  recents = [slim, ...recents.filter((r) => r.id !== t.id)].slice(0, 12);
+  recents = [slim(t), ...recents.filter((r) => r.id !== t.id)].slice(0, 12);
   store.set("aq-recent", recents);
   renderRecents();
 }
 function renderRecents() {
   $("recent-wrap").hidden = !recents.length;
   recentEl.replaceChildren(...recents.map((t, i) => card(t, recents, i)));
+  updateHomeEmpty();
   markActive();
 }
 
-let chartKind = "trending";
-let chartGenre = "all-music";
-let chartSeq = 0;
+/* ---------- likes (stored locally, newest first) ---------- */
+let likes = store.get("aq-likes", []);
+const isLiked = (t) => !!t && likes.some((l) => l.id === t.id);
 
-function renderChips() {
-  chipsEl.replaceChildren(
-    ...GENRES.map(([id, label]) => {
-      const b = make("button", id === chartGenre ? "chip on" : "chip", label);
-      b.dataset.v = id;
-      return b;
-    })
-  );
-  document.querySelectorAll("#kind-seg button").forEach((b) =>
-    b.classList.toggle("on", b.dataset.v === chartKind)
-  );
+function updateLikeButton() {
+  const on = isLiked(current);
+  likeBtn.classList.toggle("on", on);
+  likeBtn.setAttribute("aria-pressed", String(on));
+  likeBtn.title = on ? "Remove from liked tracks" : "Add to liked tracks";
 }
-chipsEl.addEventListener("click", (e) => {
-  const b = e.target.closest(".chip");
-  if (!b) return;
-  chartGenre = b.dataset.v;
-  renderChips();
-  loadCharts();
-});
-$("kind-seg").addEventListener("click", (e) => {
-  const b = e.target.closest("button");
-  if (!b) return;
-  chartKind = b.dataset.v;
-  renderChips();
-  loadCharts();
-});
 
-async function loadCharts() {
-  const my = ++chartSeq;
-  chartsEl.replaceChildren();
-  homeStatus.textContent = "Loading charts…";
-  try {
-    const tracks = await invoke("charts", { kind: chartKind, genre: chartGenre });
-    if (my !== chartSeq) return;
-    chartsLoaded = true;
-    homeStatus.textContent = tracks.length ? "" : "Nothing here right now";
-    chartsEl.replaceChildren(...tracks.map((t, i) => card(t, tracks, i)));
-    markActive();
-  } catch (err) {
-    if (my === chartSeq) homeStatus.textContent = String(err);
+function renderLikes() {
+  // Home: the 12 newest as cards
+  likedWrap.hidden = !likes.length;
+  likedGrid.replaceChildren(...likes.slice(0, 12).map((t, i) => card(t, likes, i)));
+  $("liked-all").hidden = likes.length <= 12;
+  // Liked tracks page: everything as rows
+  likedList.replaceChildren(...likes.map((t, i) => row(t, likes, i, false)));
+  likedStatus.textContent = likes.length
+    ? ""
+    : "Nothing liked yet. Press the heart in the player to save a track.";
+  updateHomeEmpty();
+  updateLikeButton();
+  markActive();
+}
+
+function toggleLikeFor(t) {
+  likes = isLiked(t) ? likes.filter((l) => l.id !== t.id) : [slim(t), ...likes];
+  store.set("aq-likes", likes);
+  renderLikes();
+}
+likeBtn.addEventListener("click", () => current && toggleLikeFor(current));
+
+/* ---------- playlists (stored locally) ---------- */
+let playlists = store.get("aq-playlists", []);
+let openPl = null; // id of the playlist page that is open
+const savePlaylists = () => store.set("aq-playlists", playlists);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const plCount = (pl) => `${pl.tracks.length} ${pl.tracks.length === 1 ? "track" : "tracks"}`;
+const plArt = (pl) => pl.tracks.find((t) => t.artwork)?.artwork || null;
+
+function createPlaylist(name) {
+  const pl = { id: uid(), name, tracks: [] };
+  playlists.unshift(pl);
+  savePlaylists();
+  renderPlaylists();
+  return pl;
+}
+function addToPlaylist(pl, t) {
+  if (pl.tracks.some((s) => s.id === t.id)) return toast(`Already in ${pl.name}`);
+  pl.tracks.push(slim(t));
+  savePlaylists();
+  renderPlaylists();
+  toast(`Added to ${pl.name}`);
+}
+function removeFromPlaylist(plId, t) {
+  const pl = playlists.find((p) => p.id === plId);
+  if (!pl) return;
+  pl.tracks = pl.tracks.filter((s) => s.id !== t.id);
+  savePlaylists();
+  renderPlaylists();
+}
+
+function plCard(pl) {
+  const c = make("div", "card");
+  c.dataset.pl = pl.id;
+  const img = make("img", "cover");
+  img.alt = "";
+  img.loading = "lazy";
+  const a = plArt(pl);
+  if (a) img.src = a;
+  c.append(img, make("div", "title", pl.name), make("div", "artist", plCount(pl)));
+  c.addEventListener("click", () => openPlaylist(pl.id));
+  return c;
+}
+function plRow(pl) {
+  const li = make("li", "track");
+  li.dataset.pl = pl.id;
+  const img = make("img", "art");
+  img.alt = "";
+  img.loading = "lazy";
+  const a = plArt(pl);
+  if (a) img.src = a;
+  const info = make("div", "info");
+  info.append(make("div", "title", pl.name), make("div", "artist", plCount(pl)));
+  li.append(img, info);
+  li.addEventListener("click", () => openPlaylist(pl.id));
+  return li;
+}
+
+function renderPlaylists() {
+  plWrap.hidden = !playlists.length;
+  plGrid.replaceChildren(...playlists.slice(0, 12).map(plCard));
+  plAll.replaceChildren(...playlists.map(plRow));
+  plEmpty.textContent = playlists.length
+    ? ""
+    : "No playlists yet. Create one, then add tracks from the \u22EF menu or by right-clicking a track.";
+  renderPlaylistDetail();
+  updateHomeEmpty();
+}
+
+function renderPlaylistDetail() {
+  if (openPl == null) return;
+  const pl = playlists.find((p) => p.id === openPl);
+  if (!pl) {
+    openPl = null;
+    return;
   }
+  $("pl-name").textContent = pl.name;
+  $("pl-meta").textContent = plCount(pl);
+  plList.replaceChildren(...pl.tracks.map((t, i) => row(t, pl.tracks, i, false, pl.id)));
+  plStatus.textContent = pl.tracks.length
+    ? ""
+    : "This playlist is empty. Add tracks from the \u22EF menu or by right-clicking a track.";
+  $("pl-play").disabled = !pl.tracks.length;
+  markActive();
 }
+
+function openPlaylist(id) {
+  openPl = id;
+  resetDeleteBtn();
+  renderPlaylistDetail();
+  showView("playlist");
+  const sc = document.querySelector("#view-playlist .scroller");
+  if (sc) sc.scrollTop = 0;
+}
+
+$("pl-new").addEventListener("click", () =>
+  askName("New playlist", "Create", "", (name) => createPlaylist(name))
+);
+$("pl-back").addEventListener("click", () => showView("playlists"));
+$("pl-play").addEventListener("click", () => {
+  const pl = playlists.find((p) => p.id === openPl);
+  if (pl && pl.tracks.length) playFrom(pl.tracks, 0);
+});
+$("pl-rename").addEventListener("click", () => {
+  const pl = playlists.find((p) => p.id === openPl);
+  if (!pl) return;
+  askName("Rename playlist", "Save", pl.name, (name) => {
+    pl.name = name;
+    savePlaylists();
+    renderPlaylists();
+  });
+});
+
+// delete asks for a second click so it can't happen by accident
+let delTimer;
+function resetDeleteBtn() {
+  clearTimeout(delTimer);
+  const b = $("pl-delete");
+  b.dataset.armed = "0";
+  b.textContent = "Delete";
+}
+$("pl-delete").addEventListener("click", () => {
+  const b = $("pl-delete");
+  if (b.dataset.armed !== "1") {
+    b.dataset.armed = "1";
+    b.textContent = "Click again to delete";
+    delTimer = setTimeout(resetDeleteBtn, 3000);
+    return;
+  }
+  resetDeleteBtn();
+  playlists = playlists.filter((p) => p.id !== openPl);
+  openPl = null;
+  savePlaylists();
+  renderPlaylists();
+  showView("playlists");
+  toast("Playlist deleted");
+});
 
 /* ---------- playback ---------- */
 let queue = [];
@@ -404,7 +742,7 @@ function showNowPlaying(t) {
     bigArt.hidden = true;
   }
   updateBackground();
-  updatePinButton();
+  updateLikeButton();
   npEmpty.hidden = true;
   npContent.hidden = false;
 }
@@ -442,7 +780,7 @@ async function playAt(i) {
   setPlaying(true);
   try {
     if (!t.streamApi) {
-      // came from "recently played": fetch fresh stream info first
+      // came from recent / liked / a playlist: fetch fresh stream info first
       t = await invoke("get_track", { id: t.id });
       if (my !== gen) return;
       queue[i] = t;
@@ -539,7 +877,15 @@ seek.addEventListener("change", async () => {
 });
 
 document.addEventListener("keydown", (e) => {
-  const typing = document.activeElement === input;
+  if (e.key === "Escape") {
+    if (!nameModal.hidden) closeName();
+    else closeMenu();
+    return;
+  }
+  // typing in the search box or the name dialog must not trigger shortcuts
+  if (!nameModal.hidden || !menuEl.hidden) return;
+  const a = document.activeElement;
+  const typing = a instanceof HTMLInputElement && a.type === "text";
   if (e.code === "Space" && !typing && index >= 0) {
     e.preventDefault();
     document.activeElement?.blur?.();
@@ -567,7 +913,7 @@ async function runSearch(q) {
   const my = ++searchSeq;
   lastQuery = q;
   // keep the old results on screen while the new ones load
-  statusEl.textContent = results.children.length ? "" : "Searching…";
+  statusEl.textContent = results.children.length ? "" : "Searching\u2026";
   try {
     const tracks = await invoke("search", { query: q });
     if (my !== searchSeq) return; // a newer search took over
@@ -600,7 +946,8 @@ $("search-form").addEventListener("submit", (e) => {
 /* ---------- start ---------- */
 $("greeting").textContent = greet();
 applySettings();
-renderChips();
+applyZoom(false);
 renderRecents();
+renderLikes();
+renderPlaylists();
 showView("home");
-
