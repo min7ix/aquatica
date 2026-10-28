@@ -122,8 +122,17 @@ svg.fill { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; 
   gap: 26px;
   padding: 0 12px 14px;
 }
-.sb-top { display: flex; align-items: center; height: var(--top); padding-left: 10px; }
-.brand { font-weight: 650; font-size: 16px; letter-spacing: 0.2px; }
+.sb-top { display: flex; align-items: center; height: var(--top); padding-left: 13px; }
+.brand {
+  font-family: "Helvetica Neue", Helvetica, "Nimbus Sans", "Liberation Sans", Arial, sans-serif;
+  font-weight: 600;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  text-transform: lowercase;
+  /* nudge the wordmark here if it still looks off */
+  transform: translate(var(--brand-x, 0px), var(--brand-y, 0px));
+}
 .sb-bottom { margin-top: auto; }
 
 nav { display: flex; flex-direction: column; gap: 2px; }
@@ -666,3 +675,5 @@ html[data-light="true"] #bg { inset: 0; filter: none; opacity: 0.55; will-change
 .pl-cover-btn:hover .pl-cover-hint, .pl-cover-btn:focus-visible .pl-cover-hint, .pl-cover-btn.empty .pl-cover-hint { opacity: 1; }
 .pl-cover-btn.empty .pl-cover-hint { background: transparent; color: var(--text-dim); }
 .pl-cover-btn.empty:hover .pl-cover-hint { color: var(--text); }
+
+.set-desc.path { -webkit-user-select: text; user-select: text; word-break: break-all; }

@@ -6,7 +6,7 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{Manager, State};
 
 // two mpv sockets: one for the track that is playing, one for the preloaded next track
@@ -460,6 +460,102 @@ fn seek(seconds: f64, player: State<Player>) -> Result<(), String> {
     )
 }
 
+// ---------- library (likes, playlists and covers live in one JSON file) ----------
+fn lib_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+#[derive(Serialize)]
+struct LibraryLoad {
+    text: Option<String>,        // the file's contents, if there is one
+    quarantined: Option<String>, // name of a damaged file we moved aside
+}
+
+#[tauri::command]
+async fn library_load(app: tauri::AppHandle) -> Result<LibraryLoad, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<LibraryLoad, String> {
+        let dir = lib_dir(&app)?;
+        let path = dir.join("library.json");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(LibraryLoad { text: None, quarantined: None });
+            }
+            Err(e) => return Err(e.to_string()),
+        };
+        if serde_json::from_str::<Value>(&text).is_ok() {
+            return Ok(LibraryLoad { text: Some(text), quarantined: None });
+        }
+        // damaged file: keep a copy next to it and start clean instead of overwriting it
+        let ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let name = format!("library.corrupt-{ts}.json");
+        std::fs::rename(&path, dir.join(&name)).map_err(|e| e.to_string())?;
+        Ok(LibraryLoad { text: None, quarantined: Some(name) })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+// Write to a temp file first, keep the previous version as library.bak.json, then swap.
+#[tauri::command]
+async fn library_save(app: tauri::AppHandle, data: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        serde_json::from_str::<Value>(&data).map_err(|e| format!("not valid JSON: {e}"))?;
+        let dir = lib_dir(&app)?;
+        let path = dir.join("library.json");
+        let tmp = dir.join("library.json.tmp");
+        std::fs::write(&tmp, &data).map_err(|e| e.to_string())?;
+        if path.exists() {
+            let _ = std::fs::copy(&path, dir.join("library.bak.json"));
+        }
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn library_path(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(lib_dir(&app)?.join("library.json").to_string_lossy().to_string())
+}
+
+// Export: drop a JSON file into Downloads (never overwrites an existing file).
+#[tauri::command]
+async fn export_file(app: tauri::AppHandle, name: String, contents: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let dir = app
+            .path()
+            .download_dir()
+            .or_else(|_| app.path().home_dir())
+            .map_err(|e| e.to_string())?;
+        let cleaned: String = name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+            .collect();
+        let cleaned = cleaned.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+        let stem: String = if cleaned.is_empty() {
+            "aquatica-export".to_string()
+        } else {
+            cleaned.chars().take(80).collect()
+        };
+        let mut path = dir.join(format!("{stem}.json"));
+        let mut n = 1;
+        while path.exists() {
+            path = dir.join(format!("{stem}-{n}.json"));
+            n += 1;
+        }
+        std::fs::write(&path, contents).map_err(|e| e.to_string())?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 // ---------- window (we draw our own frame) ----------
 #[tauri::command]
 fn start_drag(window: tauri::WebviewWindow) {
@@ -518,7 +614,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             search, related, get_track, play, preload, toggle_pause, stop,
             player_state, seek, start_drag, win_minimize, win_toggle_max, win_close,
-            set_zoom
+            set_zoom, library_load, library_save, library_path, export_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquatica");

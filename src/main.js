@@ -517,7 +517,7 @@ function greet() {
 
 function updateHomeEmpty() {
   homeEmpty.textContent =
-    recents.length || likes.length || playlists.length
+    !libraryChecked || recents.length || likes.length || playlists.length
       ? ""
       : "Search for a track and play it. Your recent and liked tracks will show up here.";
 }
@@ -536,7 +536,7 @@ function renderRecents() {
 }
 
 /* ---------- likes (stored locally, newest first) ---------- */
-let likes = store.get("aq-likes", []);
+let likes = []; // loaded from the library file (see loadLibrary)
 const isLiked = (t) => !!t && likes.some((l) => l.id === t.id);
 
 function updateLikeButton() {
@@ -563,15 +563,15 @@ function renderLikes() {
 
 function toggleLikeFor(t) {
   likes = isLiked(t) ? likes.filter((l) => l.id !== t.id) : [slim(t), ...likes];
-  store.set("aq-likes", likes);
+  saveLibrary();
   renderLikes();
 }
 likeBtn.addEventListener("click", () => current && toggleLikeFor(current));
 
 /* ---------- playlists (stored locally) ---------- */
-let playlists = store.get("aq-playlists", []);
+let playlists = []; // loaded from the library file (see loadLibrary)
 let openPl = null; // id of the playlist page that is open
-const savePlaylists = () => store.set("aq-playlists", playlists);
+const savePlaylists = () => saveLibrary();
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const plCount = (pl) => `${pl.tracks.length} ${pl.tracks.length === 1 ? "track" : "tracks"}`;
 const plArt = (pl) => pl.cover || pl.tracks.find((t) => t.artwork)?.artwork || null;
@@ -718,16 +718,12 @@ $("cover-file").addEventListener("change", async (e) => {
   e.target.value = "";
   const pl = playlists.find((p) => p.id === openPl);
   if (!file || !pl) return;
-  const old = pl.cover;
   try {
     pl.cover = await fileToCover(file);
   } catch {
     return toast("Couldn't read that image");
   }
-  if (!savePlaylists()) {
-    pl.cover = old;
-    return toast("Couldn't save the cover (storage is full)");
-  }
+  savePlaylists();
   renderPlaylists();
 });
 $("pl-cover-clear").addEventListener("click", () => {
@@ -762,6 +758,195 @@ $("pl-delete").addEventListener("click", () => {
   showView("playlists");
   toast("Playlist deleted");
 });
+
+/* ---------- library file: likes, playlists and covers ---------- */
+let libraryChecked = false; // have we tried to load the file yet?
+let libraryReady = false; // loaded OK, so it is safe to write
+let saving = false;
+let dirty = false;
+
+const snapshot = () => ({ app: "aquatica", version: 1, likes, playlists });
+
+// Saves are serialized and always write the newest state, so two quick changes can't land out of order.
+function saveLibrary() {
+  if (!libraryReady) return;
+  dirty = true;
+  if (!saving) flushLibrary();
+}
+async function flushLibrary() {
+  saving = true;
+  while (dirty) {
+    dirty = false;
+    try {
+      await invoke("library_save", { data: JSON.stringify(snapshot()) });
+    } catch (err) {
+      toast(`Couldn't save your library: ${err}`);
+    }
+  }
+  saving = false;
+}
+
+// Anything that comes from a file is checked before it touches the app.
+function cleanTrack(t) {
+  if (!t || typeof t !== "object") return null;
+  const id = Number(t.id);
+  if (!Number.isFinite(id) || typeof t.title !== "string") return null;
+  return {
+    id,
+    title: t.title,
+    artist: typeof t.artist === "string" ? t.artist : "",
+    artwork: typeof t.artwork === "string" && t.artwork.startsWith("https://") ? t.artwork : null,
+    duration: Number.isFinite(t.duration) ? t.duration : null,
+  };
+}
+const cleanTracks = (list) =>
+  (Array.isArray(list) ? list : []).map(cleanTrack).filter(Boolean).slice(0, 5000);
+
+function cleanPlaylist(p) {
+  if (!p || typeof p !== "object") return null;
+  const name = typeof p.name === "string" && p.name.trim() ? p.name.trim().slice(0, 60) : "Untitled";
+  const out = { id: typeof p.id === "string" && p.id ? p.id : uid(), name, tracks: cleanTracks(p.tracks) };
+  if (typeof p.cover === "string" && p.cover.startsWith("data:image/") && p.cover.length < 3000000) {
+    out.cover = p.cover;
+  }
+  return out;
+}
+const cleanPlaylists = (list) => (Array.isArray(list) ? list : []).map(cleanPlaylist).filter(Boolean);
+
+async function loadLibrary() {
+  try {
+    let res;
+    try {
+      res = await invoke("library_load");
+    } catch (err) {
+      // can't read the file: leave saving switched off so nothing gets overwritten
+      toast(`Couldn't open your library file: ${err}`);
+      return;
+    }
+    if (res.quarantined) toast(`Your library file was damaged. A copy was kept as ${res.quarantined}`);
+
+    let data = null;
+    if (res.text) {
+      try {
+        data = JSON.parse(res.text);
+      } catch {}
+    }
+    if (data) {
+      likes = cleanTracks(data.likes);
+      playlists = cleanPlaylists(data.playlists);
+      libraryReady = true;
+      return;
+    }
+
+    // no file yet: bring over what the old localStorage version had, once
+    libraryReady = true;
+    const oldLikes = store.get("aq-likes", []);
+    const oldPlaylists = store.get("aq-playlists", []);
+    if (oldLikes.length || oldPlaylists.length) {
+      likes = cleanTracks(oldLikes);
+      playlists = cleanPlaylists(oldPlaylists);
+      try {
+        await invoke("library_save", { data: JSON.stringify(snapshot()) });
+        try {
+          localStorage.removeItem("aq-likes");
+          localStorage.removeItem("aq-playlists");
+        } catch {}
+        toast("Moved your likes and playlists into a library file");
+      } catch (err) {
+        toast(`Couldn't create the library file: ${err}`);
+      }
+    }
+  } finally {
+    libraryChecked = true;
+    renderLikes();
+    renderPlaylists();
+  }
+}
+
+/* export / import */
+const readText = (file) =>
+  new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsText(file);
+  });
+
+async function exportData(stem, payload) {
+  try {
+    const path = await invoke("export_file", { name: stem, contents: JSON.stringify(payload, null, 2) });
+    const parts = path.split(/[\\/]/);
+    toast(`Saved ${parts.pop()} in ${parts.pop() || "your folder"}`);
+  } catch (err) {
+    toast(`Export failed: ${err}`);
+  }
+}
+const today = () => new Date().toISOString().slice(0, 10);
+
+// Import only adds things. Same playlist id = fill in what's missing; new id = new playlist.
+function mergeLibrary(data) {
+  const r = { likes: 0, playlists: 0, tracks: 0 };
+  const known = new Set(likes.map((l) => l.id));
+  for (const t of cleanTracks(data.likes)) {
+    if (known.has(t.id)) continue;
+    likes.push(t);
+    known.add(t.id);
+    r.likes++;
+  }
+  for (const p of cleanPlaylists(data.playlists)) {
+    const mine = playlists.find((x) => x.id === p.id);
+    if (!mine) {
+      playlists.push(p);
+      r.playlists++;
+      r.tracks += p.tracks.length;
+      continue;
+    }
+    const ids = new Set(mine.tracks.map((t) => t.id));
+    for (const t of p.tracks) {
+      if (ids.has(t.id)) continue;
+      mine.tracks.push(t);
+      ids.add(t.id);
+      r.tracks++;
+    }
+    if (!mine.cover && p.cover) mine.cover = p.cover;
+  }
+  return r;
+}
+
+$("lib-export").addEventListener("click", () =>
+  exportData(`aquatica-library-${today()}`, { ...snapshot(), kind: "library" })
+);
+$("pl-export").addEventListener("click", () => {
+  const pl = playlists.find((p) => p.id === openPl);
+  if (!pl) return;
+  exportData(`aquatica-playlist-${pl.name}`, { app: "aquatica", version: 1, kind: "playlist", likes: [], playlists: [pl] });
+});
+$("lib-import").addEventListener("click", () => $("import-file").click());
+$("import-file").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await readText(file));
+  } catch {
+    return toast("That file isn't valid JSON");
+  }
+  if (!data || data.app !== "aquatica") return toast("That doesn't look like an Aquatica export");
+  const r = mergeLibrary(data);
+  if (!r.likes && !r.playlists && !r.tracks) return toast("Nothing new in that file");
+  saveLibrary();
+  renderLikes();
+  renderPlaylists();
+  const bits = [];
+  if (r.likes) bits.push(`${r.likes} liked`);
+  if (r.playlists) bits.push(`${r.playlists} ${r.playlists === 1 ? "playlist" : "playlists"}`);
+  if (r.tracks) bits.push(`${r.tracks} playlist ${r.tracks === 1 ? "track" : "tracks"}`);
+  toast(`Imported ${bits.join(", ")}`);
+});
+invoke("library_path")
+  .then((p) => ($("lib-path").textContent = p))
+  .catch(() => {});
 
 /* ---------- playback ---------- */
 let queue = [];
@@ -1053,6 +1238,5 @@ $("greeting").textContent = greet();
 applySettings();
 applyZoom(false);
 renderRecents();
-renderLikes();
-renderPlaylists();
 showView("home");
+loadLibrary(); // fills in likes + playlists, then renders them

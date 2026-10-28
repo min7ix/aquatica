@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aquatica</title>
+    <title>aquatica</title>
     <link rel="stylesheet" href="/styles.css" />
     <script type="module" src="/main.js" defer></script>
   </head>
@@ -16,7 +16,7 @@
 
       <!-- ===== SIDEBAR ===== -->
       <aside class="sidebar" data-drag>
-        <div class="sb-top"><span class="brand">Aquatica</span></div>
+        <div class="sb-top"><span class="brand">aquatica</span></div>
 
         <nav>
           <button class="nav-item active" data-view="home">
@@ -130,6 +130,7 @@
                 <div class="pl-actions">
                   <button class="btn-solid" id="pl-play">Play</button>
                   <button class="btn-ghost" id="pl-rename">Rename</button>
+                  <button class="btn-ghost" id="pl-export">Export</button>
                   <button class="btn-ghost" id="pl-cover-clear" hidden>Remove cover</button>
                   <button class="btn-ghost" id="pl-delete">Delete</button>
                 </div>
@@ -199,6 +200,31 @@
                   <button id="zoom-out" aria-label="Zoom out">&minus;</button>
                   <button id="zoom-val" class="val" aria-label="Reset zoom">100%</button>
                   <button id="zoom-in" aria-label="Zoom in">+</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-label">Library</div>
+            <div class="group">
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Back up</div>
+                  <div class="set-desc">Saves your likes, playlists and covers as a file in your Downloads folder.</div>
+                </div>
+                <button class="btn-ghost" id="lib-export">Export</button>
+              </div>
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Import</div>
+                  <div class="set-desc">Adds tracks and playlists from an Aquatica export. Nothing you already have is removed.</div>
+                </div>
+                <button class="btn-ghost" id="lib-import">Import</button>
+                <input id="import-file" type="file" accept=".json,application/json" hidden />
+              </div>
+              <div class="set-row">
+                <div class="grow">
+                  <div class="set-title">Library file</div>
+                  <div class="set-desc path" id="lib-path"></div>
                 </div>
               </div>
             </div>
