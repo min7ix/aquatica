@@ -603,3 +603,4 @@ applySettings();
 renderChips();
 renderRecents();
 showView("home");
+

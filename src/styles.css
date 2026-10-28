@@ -18,6 +18,8 @@
 
   --content-max: 920px;
   --sidebar-w: 216px;
+  /* height of the strip above the two panels (brand + window buttons live here) */
+  --top: 48px;
   --font: "SF Pro Display", "Inter", -apple-system, system-ui, sans-serif;
 }
 
@@ -81,14 +83,22 @@ body { color: var(--text); font-family: var(--font); }
   pointer-events: none;
 }
 
+/* drag handle across the top, behind the panels */
+.dragstrip {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: var(--top);
+  z-index: 0;
+}
+
 /* ---------- icons ---------- */
 svg { flex: none; }
 .ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ic.dim { color: var(--text-dim); width: 18px; height: 18px; }
 svg.fill { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; stroke-width: 1.2; stroke-linejoin: round; }
 
-/* ---------- window buttons ---------- */
-.winctl { position: absolute; top: 12px; right: 18px; z-index: 7; display: flex; gap: 2px; }
+/* ---------- window buttons (centered in the top strip) ---------- */
+.winctl { position: absolute; top: calc((var(--top) - 30px) / 2); right: 18px; z-index: 7; display: flex; gap: 2px; }
 .winctl button {
   width: 30px; height: 30px;
   display: grid; place-items: center;
@@ -109,8 +119,8 @@ svg.fill { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; 
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 8px 12px 14px;
+  gap: 22px;
+  padding: 4px 12px 14px;
 }
 .sb-top { display: flex; align-items: center; height: 40px; padding-left: 10px; }
 .brand { font-weight: 650; font-size: 16px; letter-spacing: 0.2px; }
@@ -144,7 +154,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   z-index: 1;
   flex: 1;
   min-width: 0;
-  margin: 8px 8px 8px 0;
+  margin: var(--top) 8px 8px 0;
   border-radius: 22px;
   background: var(--panel-fill);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.08);
@@ -152,7 +162,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   flex-direction: column;
   overflow: hidden;
 }
-.topbar { height: 38px; flex: none; }
+.topbar { height: 10px; flex: none; }
 .view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* scrolling areas: content is centered and capped at --content-max */
@@ -163,9 +173,16 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   overflow-y: auto;
   padding: 0 var(--gutter) 28px;
 }
+
+/* scrollbars stay invisible until something is actually scrolling (see main.js) */
 .scroller::-webkit-scrollbar { width: 6px; height: 6px; }
-.scroller::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 99px; }
-.list { list-style: none; margin: 0; }
+.scroller::-webkit-scrollbar-thumb { background: transparent; border-radius: 99px; }
+.cards.row::-webkit-scrollbar { height: 6px; }
+.cards.row::-webkit-scrollbar-thumb { background: transparent; border-radius: 99px; }
+.scroller.scrolling::-webkit-scrollbar-thumb,
+.cards.row.scrolling::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); }
+
+.list { list-style: none; margin: 0; padding: 0; }
 .list:empty { display: none; }
 
 .section-label {
@@ -177,29 +194,24 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 #results-label { padding: 14px max(18px, calc((100% - var(--content-max)) / 2 + 18px)) 6px; }
 .section-head { display: flex; align-items: center; justify-content: space-between; padding-right: 8px; }
 
+.link-btn {
+  padding: 6px 10px;
+  border: 0; border-radius: 99px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12.5px; font-weight: 550;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.link-btn:hover { background: var(--hover-fill); color: var(--text); }
+
 /* ---------- home ---------- */
 .greeting { margin: 4px 8px 6px; font-size: 26px; font-weight: 700; letter-spacing: -0.3px; }
 .inline-status { padding: 18px 8px; font-size: 14px; color: var(--text-dim); }
 .inline-status:empty { display: none; }
 
-.chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 8px 14px; }
-.chip {
-  height: 32px; padding: 0 14px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 99px;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 13px; font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.chip:hover { color: var(--text); background: var(--hover-fill); }
-.chip.on { background: #fff; color: #0a0a0b; border-color: #fff; }
-
 .cards.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px 12px; }
 .cards.row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 8px; }
-.cards.row::-webkit-scrollbar { height: 6px; }
-.cards.row::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.14); border-radius: 99px; }
 .cards.row .card { width: 144px; flex: none; }
 
 .card { min-width: 0; padding: 8px; border-radius: 18px; cursor: pointer; transition: background 0.12s; }
@@ -287,17 +299,6 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 }
 .empty h2 { margin: 0; font-size: 20px; font-weight: 650; }
 .empty p { margin: 0; font-size: 14px; color: var(--text-dim); }
-.empty .note { min-height: 1.2em; font-size: 12.5px; color: var(--text-faint); }
-.btn-white {
-  height: 40px; margin-top: 8px; padding: 0 22px;
-  border: 0; border-radius: 999px;
-  background: #fff; color: #0a0a0b;
-  font-size: 14px; font-weight: 600;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.15s;
-}
-.btn-white:hover { background: rgba(255, 255, 255, 0.86); }
-.btn-white:active { transform: scale(0.97); }
 .btn-ghost {
   height: 34px; padding: 0 16px;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -352,6 +353,26 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   transition: background 0.15s, color 0.15s;
 }
 .seg button.on { background: rgba(255, 255, 255, 0.16); color: var(--text); }
+
+/* zoom stepper: - 100% + */
+.stepper { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border-radius: 99px; background: rgba(255, 255, 255, 0.07); flex: none; }
+.stepper button {
+  width: 30px; height: 30px;
+  border: 0; border-radius: 99px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 17px; line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.stepper button:hover:not(:disabled) { background: var(--hover-fill); color: var(--text); }
+.stepper button:disabled { opacity: 0.3; cursor: default; }
+.stepper button.val {
+  width: auto; min-width: 58px; padding: 0 8px;
+  color: var(--text);
+  font-size: 13px; font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
 
 /* background color picker */
 .picker { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 132px; flex: none; }
@@ -418,7 +439,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   flex-direction: column;
   width: clamp(300px, 25vw, 460px);
   flex: none;
-  margin: 8px 8px 8px 0;
+  margin: var(--top) 8px 8px 0;
   padding: 0 20px 16px;
   border-radius: 22px;
   background: var(--panel-fill);
@@ -428,7 +449,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 }
 .np-panel::-webkit-scrollbar { width: 0; }
 .np-panel > * { flex: none; }
-.np-panel .topbar { height: 46px; margin: 0 -20px; }
+.np-panel .topbar { height: 16px; margin: 0 -20px; }
 .np-panel .section-label { padding: 14px 2px 6px; }
 
 .np-empty {
@@ -447,7 +468,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 
 .np-big {
   align-self: center;
-  width: clamp(140px, calc(100vh - 510px), 100%);
+  width: clamp(140px, calc(100vh - 520px), 100%);
   aspect-ratio: 1;
   object-fit: cover;
   border-radius: 20px;
@@ -460,7 +481,7 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .np-big-title { font-size: 18px; font-weight: 650; line-height: 1.25; }
 .np-big-artist { margin-top: 2px; font-size: 14px; color: var(--text-dim); }
 
-/* player controls */
+/* player controls: like, prev, play, next, pin (symmetric, so play sits dead center) */
 .player { display: flex; flex-direction: column; gap: 6px; padding: 4px 0 6px; }
 .controls { display: flex; align-items: center; justify-content: center; gap: 4px; }
 .ctl {
@@ -475,8 +496,12 @@ nav { display: flex; flex-direction: column; gap: 2px; }
 .ctl:active { transform: scale(0.92); }
 .ctl.primary { width: 44px; height: 44px; background: #fff; color: #0a0a0b; }
 .ctl.primary:hover { background: rgba(255, 255, 255, 0.86); }
-.ctl.pin { margin-left: 6px; color: var(--text-dim); }
-.ctl.pin .ic { width: 18px; height: 18px; }
+
+.ctl.like, .ctl.pin { color: var(--text-dim); }
+.ctl.like:hover, .ctl.pin:hover { color: var(--text); }
+.ctl.like .ic, .ctl.pin .ic { width: 18px; height: 18px; }
+.ctl.like.on { color: #fff; }
+.ctl.like.on .ic { fill: currentColor; }
 .ctl.pin.on { color: #fff; background: rgba(255, 255, 255, 0.16); }
 .ctl.pin.on .ic { fill: currentColor; }
 
@@ -489,6 +514,9 @@ nav { display: flex; flex-direction: column; gap: 2px; }
   font-size: 11px; color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+
+/* suggested tracks: thumbnails flush with the left edge, names get the extra room */
+#related { margin: 0 -4px; }
 
 @media (max-height: 720px) {
   #related .track:nth-child(n + 4) { display: none; }
