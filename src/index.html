@@ -118,12 +118,22 @@
         <section class="view" id="view-playlist" hidden>
           <div class="scroller">
             <button class="link-btn back" id="pl-back">&larr; Playlists</button>
-            <h1 class="greeting" id="pl-name"></h1>
-            <div class="pl-meta" id="pl-meta"></div>
-            <div class="pl-actions">
-              <button class="btn-solid" id="pl-play">Play</button>
-              <button class="btn-ghost" id="pl-rename">Rename</button>
-              <button class="btn-ghost" id="pl-delete">Delete</button>
+            <div class="pl-head">
+              <button class="pl-cover-btn empty" id="pl-cover-btn" aria-label="Change cover" title="Change cover">
+                <img id="pl-cover" class="pl-cover" alt="" />
+                <span class="pl-cover-hint" id="pl-cover-hint">Add cover</span>
+              </button>
+              <input id="cover-file" type="file" accept="image/*" hidden />
+              <div class="pl-head-info">
+                <h1 class="greeting" id="pl-name"></h1>
+                <div class="pl-meta" id="pl-meta"></div>
+                <div class="pl-actions">
+                  <button class="btn-solid" id="pl-play">Play</button>
+                  <button class="btn-ghost" id="pl-rename">Rename</button>
+                  <button class="btn-ghost" id="pl-cover-clear" hidden>Remove cover</button>
+                  <button class="btn-ghost" id="pl-delete">Delete</button>
+                </div>
+              </div>
             </div>
             <div class="inline-status" id="pl-status"></div>
             <ul id="pl-list" class="list"></ul>

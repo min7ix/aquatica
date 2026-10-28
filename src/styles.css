@@ -635,3 +635,34 @@ html[data-light="true"] #bg { inset: 0; filter: none; opacity: 0.55; will-change
 }
 .dialog input:focus { border-color: rgba(255, 255, 255, 0.4); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+/* ---------- playlist page header with cover ---------- */
+.pl-head { display: flex; align-items: flex-end; gap: 20px; padding: 6px 8px 4px; }
+.pl-head-info { flex: 1; min-width: 0; }
+.pl-head-info .greeting { margin: 0 0 4px; }
+.pl-head-info .pl-meta { margin: 0; }
+.pl-head-info .pl-actions { flex-wrap: wrap; padding: 14px 0 0; }
+
+.pl-cover-btn {
+  position: relative;
+  width: 132px; height: 132px; flex: none;
+  padding: 0;
+  border: 0; border-radius: 18px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.pl-cover { display: block; width: 100%; height: 100%; object-fit: cover; filter: var(--art-filter); }
+.pl-cover:not([src]) { visibility: hidden; }
+.pl-cover-hint {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 12.5px; font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.pl-cover-btn:hover .pl-cover-hint, .pl-cover-btn:focus-visible .pl-cover-hint, .pl-cover-btn.empty .pl-cover-hint { opacity: 1; }
+.pl-cover-btn.empty .pl-cover-hint { background: transparent; color: var(--text-dim); }
+.pl-cover-btn.empty:hover .pl-cover-hint { color: var(--text); }

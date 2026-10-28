@@ -3,12 +3,14 @@ use serde::Serialize;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{Manager, State};
 
-const SOCK: &str = "/tmp/aquatica-mpv.sock";
+// two mpv sockets: one for the track that is playing, one for the preloaded next track
+const SOCKS: [&str; 2] = ["/tmp/aquatica-mpv-0.sock", "/tmp/aquatica-mpv-1.sock"];
 const API: &str = "https://api-v2.soundcloud.com";
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
 
@@ -24,7 +26,32 @@ struct Track {
     auth: String,
 }
 
-struct Player(Mutex<Option<Child>>);
+// A running mpv process. `slot` picks its socket, `track` is the SoundCloud track id.
+struct Slot {
+    child: Child,
+    slot: usize,
+    track: u64,
+}
+
+// `active` is playing. `next` is already loaded and buffering, paused, ready to take over.
+#[derive(Default)]
+struct PlayerInner {
+    active: Option<Slot>,
+    next: Option<Slot>,
+}
+
+struct Player(Mutex<PlayerInner>);
+
+fn kill_slot(s: Option<Slot>) {
+    if let Some(mut s) = s {
+        let _ = s.child.kill();
+        let _ = s.child.wait();
+    }
+}
+
+fn active_sock(player: &Player) -> Option<&'static str> {
+    player.0.lock().unwrap().active.as_ref().map(|s| SOCKS[s.slot])
+}
 
 // ---------- SoundCloud web API ----------
 // The "client id" is a public key the website itself uses; we read it from
@@ -185,69 +212,177 @@ async fn get_track(id: u64, sc: State<'_, Sc>) -> Result<Track, String> {
 }
 
 // ---------- playback (mpv) ----------
+async fn resolve(sc: &Sc, stream_api: &str, auth: &str) -> Result<String, String> {
+    let v = sc
+        .get_json(stream_api, &[("track_authorization", auth)])
+        .await?;
+    Ok(v["url"].as_str().ok_or("no stream url returned")?.to_string())
+}
+
+// Where is mpv? Apps started from Finder or a launcher don't get the shell PATH,
+// so Homebrew's mpv is invisible to them unless we look in the usual places.
+fn mpv_path() -> PathBuf {
+    // 1. shipped next to the app (a bundled copy wins)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for rel in ["mpv", "../Resources/mpv"] {
+                let p = dir.join(rel);
+                if p.is_file() {
+                    return p;
+                }
+            }
+        }
+    }
+    // 2. PATH
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let p = dir.join("mpv");
+            if p.is_file() {
+                return p;
+            }
+        }
+    }
+    // 3. the usual install spots
+    for p in [
+        "/opt/homebrew/bin/mpv",
+        "/usr/local/bin/mpv",
+        "/opt/local/bin/mpv",
+        "/usr/bin/mpv",
+        "/snap/bin/mpv",
+        "/Applications/mpv.app/Contents/MacOS/mpv",
+    ] {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return p;
+        }
+    }
+    PathBuf::from("mpv")
+}
+
+fn spawn_mpv(url: &str, sock: &str, paused: bool) -> Result<Child, String> {
+    let _ = std::fs::remove_file(sock);
+    let mut cmd = Command::new(mpv_path());
+    cmd.args([
+        "--no-video",
+        "--force-window=no",
+        "--really-quiet",
+        "--ytdl=no",
+        "--audio-display=no",
+        "--cache=yes",
+        "--demuxer-max-bytes=64MiB",
+    ]);
+    if paused {
+        // start paused: mpv still opens the stream and keeps buffering
+        cmd.arg("--pause");
+    }
+    cmd.arg(format!("--input-ipc-server={sock}"))
+        .arg(url)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                if cfg!(target_os = "macos") {
+                    "mpv not found. Install it: brew install mpv".to_string()
+                } else {
+                    "mpv not found. Install it with your package manager".to_string()
+                }
+            } else {
+                format!("couldn't start mpv: {e}")
+            }
+        })
+}
+
 #[tauri::command]
 async fn play(
+    id: u64,
     stream_api: String,
     auth: String,
     sc: State<'_, Sc>,
     player: State<'_, Player>,
 ) -> Result<(), String> {
-    let v = sc
-        .get_json(&stream_api, &[("track_authorization", auth.as_str())])
-        .await?;
-    let url = v["url"].as_str().ok_or("no stream url returned")?.to_string();
-
-    let mut guard = player.0.lock().unwrap();
-    if let Some(mut old) = guard.take() {
-        let _ = old.kill();
-        let _ = old.wait();
+    // Fast path: this track was preloaded, so just unpause it.
+    {
+        let mut g = player.0.lock().unwrap();
+        let ready = matches!(&g.next, Some(n) if n.track == id);
+        if ready {
+            let mut n = g.next.take().unwrap();
+            let alive = matches!(n.child.try_wait(), Ok(None));
+            if alive {
+                kill_slot(g.active.take());
+                if mpv_send(SOCKS[n.slot], "{\"command\":[\"set_property\",\"pause\",false]}").is_ok() {
+                    g.active = Some(n);
+                    return Ok(());
+                }
+            }
+            kill_slot(Some(n)); // preload died or isn't answering: fall through to a normal start
+        }
     }
-    let _ = std::fs::remove_file(SOCK);
 
-    let child = Command::new("mpv")
-        .args([
-            "--no-video",
-            "--force-window=no",
-            "--really-quiet",
-            "--ytdl=no",
-            "--audio-display=no",
-            &format!("--input-ipc-server={}", SOCK),
-            &url,
-        ])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("couldn't start mpv: {e}"))?;
+    // Normal path: look up the stream, start a fresh mpv.
+    let url = resolve(&sc, &stream_api, &auth).await?;
+    let mut g = player.0.lock().unwrap();
+    kill_slot(g.active.take());
+    kill_slot(g.next.take());
+    let child = spawn_mpv(&url, SOCKS[0], false)?;
+    g.active = Some(Slot { child, slot: 0, track: id });
+    Ok(())
+}
 
-    *guard = Some(child);
+// Load the upcoming track into a second, paused mpv so it can start instantly later.
+#[tauri::command]
+async fn preload(
+    id: u64,
+    stream_api: String,
+    auth: String,
+    sc: State<'_, Sc>,
+    player: State<'_, Player>,
+) -> Result<(), String> {
+    let known = |g: &PlayerInner| {
+        g.active.as_ref().map_or(false, |a| a.track == id)
+            || g.next.as_ref().map_or(false, |n| n.track == id)
+    };
+    if known(&*player.0.lock().unwrap()) {
+        return Ok(());
+    }
+    let url = resolve(&sc, &stream_api, &auth).await?;
+    let mut g = player.0.lock().unwrap();
+    if known(&*g) {
+        return Ok(()); // things moved on while we were looking it up
+    }
+    kill_slot(g.next.take());
+    let slot = match &g.active {
+        Some(a) => 1 - a.slot,
+        None => 0,
+    };
+    let child = spawn_mpv(&url, SOCKS[slot], true)?;
+    g.next = Some(Slot { child, slot, track: id });
     Ok(())
 }
 
 #[tauri::command]
-fn toggle_pause() -> Result<(), String> {
-    let mut s = UnixStream::connect(SOCK).map_err(|e| e.to_string())?;
-    s.write_all(b"{\"command\":[\"cycle\",\"pause\"]}\n")
-        .map_err(|e| e.to_string())
+fn toggle_pause(player: State<Player>) -> Result<(), String> {
+    let sock = active_sock(&player).ok_or("nothing is playing")?;
+    mpv_send(sock, "{\"command\":[\"cycle\",\"pause\"]}")
 }
 
 #[tauri::command]
 fn stop(player: State<Player>) {
-    if let Some(mut c) = player.0.lock().unwrap().take() {
-        let _ = c.kill();
-        let _ = c.wait();
-    }
+    let mut g = player.0.lock().unwrap();
+    kill_slot(g.active.take());
+    kill_slot(g.next.take());
 }
 
-fn mpv_send(cmd: &str) -> Result<(), String> {
-    let mut s = UnixStream::connect(SOCK).map_err(|e| e.to_string())?;
+fn mpv_send(sock: &str, cmd: &str) -> Result<(), String> {
+    let mut s = UnixStream::connect(sock).map_err(|e| e.to_string())?;
     s.write_all(format!("{cmd}\n").as_bytes())
         .map_err(|e| e.to_string())
 }
 
 // Ask mpv for several properties at once. None = mpv isn't running.
-fn mpv_get(props: &[&str]) -> Option<Vec<Value>> {
-    let mut stream = UnixStream::connect(SOCK).ok()?;
+fn mpv_get(sock: &str, props: &[&str]) -> Option<Vec<Value>> {
+    let mut stream = UnixStream::connect(sock).ok()?;
     stream.set_read_timeout(Some(Duration::from_millis(400))).ok()?;
     for (i, p) in props.iter().enumerate() {
         let req = format!(
@@ -295,9 +430,13 @@ impl PlayerState {
 }
 
 #[tauri::command]
-async fn player_state() -> PlayerState {
-    tauri::async_runtime::spawn_blocking(|| {
-        match mpv_get(&["time-pos", "duration", "pause"]) {
+async fn player_state(player: State<'_, Player>) -> Result<PlayerState, String> {
+    let sock = match active_sock(&player) {
+        Some(s) => s,
+        None => return Ok(PlayerState::idle()),
+    };
+    let state = tauri::async_runtime::spawn_blocking(move || {
+        match mpv_get(sock, &["time-pos", "duration", "pause"]) {
             Some(v) => PlayerState {
                 running: true,
                 position: v[0].as_f64().unwrap_or(0.0),
@@ -308,15 +447,17 @@ async fn player_state() -> PlayerState {
         }
     })
     .await
-    .unwrap_or_else(|_| PlayerState::idle())
+    .unwrap_or_else(|_| PlayerState::idle());
+    Ok(state)
 }
 
 #[tauri::command]
-fn seek(seconds: f64) -> Result<(), String> {
-    mpv_send(&format!(
-        "{{\"command\":[\"seek\",{},\"absolute\"]}}",
-        seconds.max(0.0)
-    ))
+fn seek(seconds: f64, player: State<Player>) -> Result<(), String> {
+    let sock = active_sock(&player).ok_or("nothing is playing")?;
+    mpv_send(
+        sock,
+        &format!("{{\"command\":[\"seek\",{},\"absolute\"]}}", seconds.max(0.0)),
+    )
 }
 
 // ---------- window (we draw our own frame) ----------
@@ -354,15 +495,15 @@ fn set_zoom(window: tauri::WebviewWindow, factor: f64) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(Player(Mutex::new(None)))
+        .manage(Player(Mutex::new(PlayerInner::default())))
         .manage(Sc::new())
         .on_window_event(|window, event| {
             // stop mpv when the window goes away
             if let tauri::WindowEvent::Destroyed = event {
-                if let Some(mut c) = window.state::<Player>().0.lock().unwrap().take() {
-                    let _ = c.kill();
-                    let _ = c.wait();
-                }
+                let st = window.state::<Player>();
+                let mut g = st.0.lock().unwrap();
+                kill_slot(g.active.take());
+                kill_slot(g.next.take());
             }
         })
         .setup(|app| {
@@ -375,7 +516,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            search, related, get_track, play, toggle_pause, stop,
+            search, related, get_track, play, preload, toggle_pause, stop,
             player_state, seek, start_drag, win_minimize, win_toggle_max, win_close,
             set_zoom
         ])

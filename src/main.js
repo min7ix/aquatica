@@ -16,7 +16,12 @@ const store = {
     }
   },
   set(k, v) {
-    try { localStorage.setItem(k, JSON.stringify(v)); } catch {}
+    try {
+      localStorage.setItem(k, JSON.stringify(v));
+      return true;
+    } catch {
+      return false;
+    }
   },
 };
 
@@ -569,7 +574,7 @@ let openPl = null; // id of the playlist page that is open
 const savePlaylists = () => store.set("aq-playlists", playlists);
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const plCount = (pl) => `${pl.tracks.length} ${pl.tracks.length === 1 ? "track" : "tracks"}`;
-const plArt = (pl) => pl.tracks.find((t) => t.artwork)?.artwork || null;
+const plArt = (pl) => pl.cover || pl.tracks.find((t) => t.artwork)?.artwork || null;
 
 function createPlaylist(name) {
   const pl = { id: uid(), name, tracks: [] };
@@ -645,6 +650,13 @@ function renderPlaylistDetail() {
     ? ""
     : "This playlist is empty. Add tracks from the \u22EF menu or by right-clicking a track.";
   $("pl-play").disabled = !pl.tracks.length;
+  const art = plArt(pl);
+  const img = $("pl-cover");
+  if (art) img.src = art;
+  else img.removeAttribute("src");
+  $("pl-cover-btn").classList.toggle("empty", !art);
+  $("pl-cover-hint").textContent = pl.cover ? "Change cover" : "Add cover";
+  $("pl-cover-clear").hidden = !pl.cover;
   markActive();
 }
 
@@ -673,6 +685,57 @@ $("pl-rename").addEventListener("click", () => {
     savePlaylists();
     renderPlaylists();
   });
+});
+
+// custom cover: centre-crop to a square, shrink, keep as a small JPEG data URL
+function fileToCover(file, size = 480) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      const out = Math.min(size, side);
+      const c = document.createElement("canvas");
+      c.width = c.height = out;
+      c.getContext("2d").drawImage(
+        img,
+        (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side,
+        0, 0, out, out
+      );
+      URL.revokeObjectURL(url);
+      resolve(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("not an image"));
+    };
+    img.src = url;
+  });
+}
+$("pl-cover-btn").addEventListener("click", () => $("cover-file").click());
+$("cover-file").addEventListener("change", async (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = "";
+  const pl = playlists.find((p) => p.id === openPl);
+  if (!file || !pl) return;
+  const old = pl.cover;
+  try {
+    pl.cover = await fileToCover(file);
+  } catch {
+    return toast("Couldn't read that image");
+  }
+  if (!savePlaylists()) {
+    pl.cover = old;
+    return toast("Couldn't save the cover (storage is full)");
+  }
+  renderPlaylists();
+});
+$("pl-cover-clear").addEventListener("click", () => {
+  const pl = playlists.find((p) => p.id === openPl);
+  if (!pl) return;
+  delete pl.cover;
+  savePlaylists();
+  renderPlaylists();
 });
 
 // delete asks for a second click so it can't happen by accident
@@ -712,6 +775,8 @@ let waited = 0;
 let gen = 0; // bumps on every new track so stale polls are ignored
 let dragging = false; // dragging the seek bar
 let duration = 0;
+let preloadedId = null; // id of the track we asked the backend to buffer
+let preloadTimer;
 
 function setPlaying(v) {
   playing = v;
@@ -759,6 +824,7 @@ async function loadRelated(t) {
     relLabel.hidden = !list.length;
     relList.replaceChildren(...list.slice(0, 4).map((x, i) => row(x, list, i, true)));
     markActive();
+    if (index + 1 >= queue.length) schedulePreload(); // the next track is a suggestion
   } catch {
     /* suggestions are optional */
   }
@@ -770,6 +836,8 @@ async function playAt(i) {
   index = i;
   current = t;
   const my = ++gen;
+  preloadedId = null;
+  clearTimeout(preloadTimer);
   loading = true;
   started = false;
   waited = 0;
@@ -787,8 +855,11 @@ async function playAt(i) {
       current = t;
     }
     pushRecent(t);
-    await invoke("play", { streamApi: t.streamApi, auth: t.auth });
-    if (my === gen) loadRelated(t);
+    await invoke("play", { id: t.id, streamApi: t.streamApi, auth: t.auth });
+    if (my === gen) {
+      loadRelated(t);
+      schedulePreload();
+    }
   } catch (err) {
     if (my === gen) {
       setPlaying(false);
@@ -796,6 +867,40 @@ async function playAt(i) {
     }
   } finally {
     if (my === gen) loading = false;
+  }
+}
+
+// What nextTrack() would play: the next queue entry, or the first suggestion at the end.
+function peekNext() {
+  if (index + 1 < queue.length) return { list: queue, i: index + 1 };
+  if (related.length) return { list: related, i: 0 };
+  return null;
+}
+
+// Two seconds after a track starts, buffer the next one in a second paused mpv.
+function schedulePreload() {
+  clearTimeout(preloadTimer);
+  const my = gen;
+  preloadTimer = setTimeout(() => preloadNext(my), 2000);
+}
+
+async function preloadNext(my) {
+  if (my !== gen) return;
+  const p = peekNext();
+  if (!p) return;
+  let t = p.list[p.i];
+  if (!t || preloadedId === t.id) return;
+  preloadedId = t.id;
+  try {
+    if (!t.streamApi) {
+      // slim track (playlist / liked): fetch stream info now, and keep it so playAt can skip this step
+      t = await invoke("get_track", { id: t.id });
+      if (my !== gen) return;
+      p.list[p.i] = t;
+    }
+    await invoke("preload", { id: t.id, streamApi: t.streamApi, auth: t.auth });
+  } catch {
+    preloadedId = null; // optional: playback still works without it
   }
 }
 
