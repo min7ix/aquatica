@@ -1,0 +1,48 @@
+
+name: Build Aquatica for macOS
+
+on:
+  push:
+    tags:
+      - "macos-test-*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish macOS package
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: "-"
+        with:
+          args: "--target aarch64-apple-darwin --bundles dmg"
+          tagName: ${{ github.ref_name }}
+          releaseName: "Aquatica macOS test ${{ github.ref_name }}"
+          releaseBody: |
+            Experimental Apple Silicon build of Aquatica.
+
+            This is an early testing release. Please report any problems.
+          releaseDraft: false
+          prerelease: true
