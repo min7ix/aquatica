@@ -20,7 +20,7 @@
   --sidebar-w: 216px;
   /* height of the strip above the two panels (brand + window buttons live here) */
   --top: 38px;
-  --font: "SF Pro Display", "Inter", -apple-system, system-ui, sans-serif;
+  --font: "Helvetica Neue", Helvetica, "Nimbus Sans", "Nimbus Sans L", "Liberation Sans", Arial, sans-serif;
 }
 
 * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
@@ -119,16 +119,17 @@ svg.fill { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; 
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 26px;
+  gap: 12px;
   padding: 0 12px 14px;
 }
-.sb-top { display: flex; align-items: center; height: var(--top); padding-left: 13px; }
+/* wordmark zone: taller than the panel strip so the name has room away from the rounded corner */
+.sb-top { display: flex; align-items: center; height: 58px; padding-left: 12px; }
 .brand {
-  font-family: "Helvetica Neue", Helvetica, "Nimbus Sans", "Liberation Sans", Arial, sans-serif;
+  font-family: var(--font);
   font-weight: 600;
-  font-size: 18px;
+  font-size: 25px;
   line-height: 1;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.045em;
   text-transform: lowercase;
   /* nudge the wordmark here if it still looks off */
   transform: translate(var(--brand-x, 0px), var(--brand-y, 0px));

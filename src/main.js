@@ -875,6 +875,7 @@ const readText = (file) =>
 async function exportData(stem, payload) {
   try {
     const path = await invoke("export_file", { name: stem, contents: JSON.stringify(payload, null, 2) });
+    if (!path) return; // the save dialog was cancelled
     const parts = path.split(/[\\/]/);
     toast(`Saved ${parts.pop()} in ${parts.pop() || "your folder"}`);
   } catch (err) {
