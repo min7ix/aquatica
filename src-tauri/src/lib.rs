@@ -267,7 +267,7 @@ fn mpv_path() -> PathBuf {
     // 1. shipped next to the app (a bundled copy wins)
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            for rel in ["mpv", "../Resources/mpv"] {
+            for rel in ["mpv", "../Resources/mpv", "../Resources/mpv.app/Contents/MacOS/mpv"] {
                 let p = dir.join(rel);
                 if p.is_file() {
                     return p;
