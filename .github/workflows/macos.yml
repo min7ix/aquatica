@@ -17,9 +17,7 @@ permissions:
 
 jobs:
   build-macos:
-    # macos-15 is a native Apple Silicon (arm64) GitHub-hosted runner.
     runs-on: macos-15
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -47,7 +45,7 @@ jobs:
             "https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-arm64-0.40.0.tar.gz" \
             --output "$archive"
           echo "3170fb709defebaba33e9755297d70dc3562220541de54fc3d494a8309ef1260  $archive" | shasum -a 256 --check
-          binary_path="$(tar -tzf "$archive" | grep -E '(^|/)mpv[.]app/Contents/MacOS/mpv
+          binary_path="$(tar -tzf "$archive" | grep -E '(^|/)mpv[.]app/Contents/MacOS/mpv$' | head -n 1 || true)"
           if [[ -z "$binary_path" ]]; then
             echo "Could not find the MPV executable in the archive. Archive contents:"
             tar -tzf "$archive" | sed -n '1,80p'
@@ -66,46 +64,6 @@ jobs:
       - name: Build Apple Silicon DMG
         run: npm run tauri -- build --config src-tauri/tauri.macos.conf.json --target aarch64-apple-darwin --bundles dmg
         env:
-          # Produce an unsigned test build. Distribution still requires signing
-          # and notarization with an Apple Developer identity.
-          APPLE_SIGNING_IDENTITY: "-"
-
-      - name: Upload macOS build
-        uses: actions/upload-artifact@v4
-        with:
-          name: aquatica-macos-aarch64
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish tagged test release
-        if: startsWith(github.ref, 'refs/tags/macos-test-')
-        uses: softprops/action-gh-release@v2
-        with:
-          prerelease: true
-          generate_release_notes: true
-          files: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
- | head -n 1 || true)"
-          if [[ -z "$binary_path" ]]; then
-            echo "Could not find the MPV executable in the archive. Archive contents:"
-            tar -tzf "$archive" | sed -n '1,80p'
-            exit 1
-          fi
-          app_path="${binary_path%/Contents/MacOS/mpv}"
-          echo "Found MPV app bundle at: $app_path"
-          tar -xzf "$archive" -C "$RUNNER_TEMP" "$app_path"
-          mkdir -p src-tauri/binaries
-          cp -R "$RUNNER_TEMP/$app_path" src-tauri/binaries/mpv.app
-          chmod 755 src-tauri/binaries/mpv.app/Contents/MacOS/mpv
-          file src-tauri/binaries/mpv.app/Contents/MacOS/mpv
-          otool -L src-tauri/binaries/mpv.app/Contents/MacOS/mpv
-          src-tauri/binaries/mpv.app/Contents/MacOS/mpv --version
-
-      - name: Build Apple Silicon DMG
-        run: npm run tauri -- build --config src-tauri/tauri.macos.conf.json --target aarch64-apple-darwin --bundles dmg
-        env:
-          # Produce an unsigned test build. Distribution still requires signing
-          # and notarization with an Apple Developer identity.
           APPLE_SIGNING_IDENTITY: "-"
 
       - name: Upload macOS build
