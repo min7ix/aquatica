@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -31,7 +31,7 @@ struct Track {
 struct Slot {
     child: Child,
     slot: usize,
-    track: u64,
+    track: i64, // SoundCloud id, or a negative id for your own files
 }
 
 // `active` is playing. `next` is already loaded and buffering, paused, ready to take over.
@@ -48,6 +48,10 @@ fn kill_slot(s: Option<Slot>) {
         let _ = s.child.kill();
         let _ = s.child.wait();
     }
+}
+
+fn active_info(player: &Player) -> Option<(&'static str, i64)> {
+    player.0.lock().unwrap().active.as_ref().map(|s| (SOCKS[s.slot], s.track))
 }
 
 fn active_sock(player: &Player) -> Option<&'static str> {
@@ -222,6 +226,43 @@ async fn resolve(sc: &Sc, stream_api: &str, auth: &str) -> Result<String, String
 
 // Where is mpv? Apps started from Finder or a launcher don't get the shell PATH,
 // so Homebrew's mpv is invisible to them unless we look in the usual places.
+fn music_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = lib_dir(app)?.join("music");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+// Your files are stored under generated names like 1787123456789012.mp3. Refuse anything else,
+// so a hand-edited library file can't point the player at arbitrary paths.
+fn local_path(app: &tauri::AppHandle, file: &str) -> Result<PathBuf, String> {
+    let ok = !file.is_empty()
+        && file.len() < 64
+        && file.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
+        && !file.contains("..");
+    if !ok {
+        return Err("bad file name".into());
+    }
+    let p = music_dir(app)?.join(file);
+    if !p.is_file() {
+        return Err("that file isn't in this library".into());
+    }
+    Ok(p)
+}
+
+async fn source_url(
+    app: &tauri::AppHandle,
+    sc: &Sc,
+    stream_api: Option<String>,
+    auth: Option<String>,
+    file: Option<String>,
+) -> Result<String, String> {
+    if let Some(f) = file {
+        return Ok(local_path(app, &f)?.to_string_lossy().to_string());
+    }
+    let api = stream_api.ok_or("no stream info for that track")?;
+    resolve(sc, &api, &auth.unwrap_or_default()).await
+}
+
 fn mpv_path() -> PathBuf {
     // 1. shipped next to the app (a bundled copy wins)
     if let Ok(exe) = std::env::current_exe() {
@@ -297,9 +338,11 @@ fn spawn_mpv(url: &str, sock: &str, paused: bool) -> Result<Child, String> {
 
 #[tauri::command]
 async fn play(
-    id: u64,
-    stream_api: String,
-    auth: String,
+    app: tauri::AppHandle,
+    id: i64,
+    stream_api: Option<String>,
+    auth: Option<String>,
+    file: Option<String>,
     sc: State<'_, Sc>,
     player: State<'_, Player>,
 ) -> Result<(), String> {
@@ -322,7 +365,7 @@ async fn play(
     }
 
     // Normal path: look up the stream, start a fresh mpv.
-    let url = resolve(&sc, &stream_api, &auth).await?;
+    let url = source_url(&app, &sc, stream_api, auth, file).await?;
     let mut g = player.0.lock().unwrap();
     kill_slot(g.active.take());
     kill_slot(g.next.take());
@@ -334,9 +377,11 @@ async fn play(
 // Load the upcoming track into a second, paused mpv so it can start instantly later.
 #[tauri::command]
 async fn preload(
-    id: u64,
-    stream_api: String,
-    auth: String,
+    app: tauri::AppHandle,
+    id: i64,
+    stream_api: Option<String>,
+    auth: Option<String>,
+    file: Option<String>,
     sc: State<'_, Sc>,
     player: State<'_, Player>,
 ) -> Result<(), String> {
@@ -347,7 +392,7 @@ async fn preload(
     if known(&*player.0.lock().unwrap()) {
         return Ok(());
     }
-    let url = resolve(&sc, &stream_api, &auth).await?;
+    let url = source_url(&app, &sc, stream_api, auth, file).await?;
     let mut g = player.0.lock().unwrap();
     if known(&*g) {
         return Ok(()); // things moved on while we were looking it up
@@ -422,18 +467,19 @@ struct PlayerState {
     position: f64,
     duration: f64,
     paused: bool,
+    track: Option<i64>, // which track the playing mpv belongs to
 }
 
 impl PlayerState {
     fn idle() -> Self {
-        PlayerState { running: false, position: 0.0, duration: 0.0, paused: false }
+        PlayerState { running: false, position: 0.0, duration: 0.0, paused: false, track: None }
     }
 }
 
 #[tauri::command]
 async fn player_state(player: State<'_, Player>) -> Result<PlayerState, String> {
-    let sock = match active_sock(&player) {
-        Some(s) => s,
+    let (sock, track) = match active_info(&player) {
+        Some(x) => x,
         None => return Ok(PlayerState::idle()),
     };
     let state = tauri::async_runtime::spawn_blocking(move || {
@@ -443,6 +489,7 @@ async fn player_state(player: State<'_, Player>) -> Result<PlayerState, String> 
                 position: v[0].as_f64().unwrap_or(0.0),
                 duration: v[1].as_f64().unwrap_or(0.0),
                 paused: v[2].as_bool().unwrap_or(false),
+                track: Some(track),
             },
             None => PlayerState::idle(),
         }
@@ -569,6 +616,116 @@ async fn export_file(
     .map_err(|e| e.to_string())?
 }
 
+// ---------- your own music ----------
+const AUDIO_EXTS: [&str; 10] = ["mp3", "flac", "ogg", "opus", "m4a", "aac", "wav", "wma", "aiff", "aif"];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalTrack {
+    id: i64,
+    title: String,
+    artist: String,
+    duration: Option<f64>,
+    file: String,
+    local: bool,
+}
+
+// Title / artist / length from the file's tags. Falls back to the file name ("Artist - Title" works too).
+fn read_tags(copied: &Path, original: &Path) -> (String, String, Option<f64>) {
+    use lofty::prelude::*;
+    let stem = original
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Unknown")
+        .to_string();
+    let mut title = stem.clone();
+    let mut artist = String::new();
+    let mut duration = None;
+    if let Some((a, t)) = stem.split_once(" - ") {
+        artist = a.trim().to_string();
+        title = t.trim().to_string();
+    }
+    if let Ok(tagged) = lofty::read_from_path(copied) {
+        let secs = tagged.properties().duration().as_secs_f64();
+        if secs > 0.0 {
+            duration = Some(secs);
+        }
+        if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+            if let Some(t) = tag.title() {
+                let t = t.trim();
+                if !t.is_empty() {
+                    title = t.to_string();
+                }
+            }
+            if let Some(a) = tag.artist() {
+                let a = a.trim();
+                if !a.is_empty() {
+                    artist = a.to_string();
+                }
+            }
+        }
+    }
+    if artist.is_empty() {
+        artist = "Unknown artist".to_string();
+    }
+    (title, artist, duration)
+}
+
+// Pick audio files, copy them into the app's music folder, read their tags.
+#[tauri::command]
+async fn local_import(app: tauri::AppHandle) -> Result<Vec<LocalTrack>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<LocalTrack>, String> {
+        let picked = match app
+            .dialog()
+            .file()
+            .set_title("Add music")
+            .add_filter("Audio", &AUDIO_EXTS)
+            .blocking_pick_files()
+        {
+            Some(p) => p,
+            None => return Ok(vec![]),
+        };
+        let dir = music_dir(&app)?;
+        let base = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut out = Vec::new();
+        for (n, fp) in picked.into_iter().enumerate() {
+            let src = match fp.into_path() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let ext = src
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            if !AUDIO_EXTS.contains(&ext.as_str()) {
+                continue;
+            }
+            // negative ids can never clash with SoundCloud track ids
+            let id = -(base * 1000 + n as i64);
+            let file = format!("{}.{}", id.unsigned_abs(), ext);
+            let dest = dir.join(&file);
+            if std::fs::copy(&src, &dest).is_err() {
+                continue;
+            }
+            let (title, artist, duration) = read_tags(&dest, &src);
+            out.push(LocalTrack { id, title, artist, duration, file, local: true });
+        }
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn local_delete(app: tauri::AppHandle, file: String) -> Result<(), String> {
+    let p = local_path(&app, &file)?;
+    std::fs::remove_file(p).map_err(|e| e.to_string())
+}
+
 // ---------- window (we draw our own frame) ----------
 #[tauri::command]
 fn start_drag(window: tauri::WebviewWindow) {
@@ -623,12 +780,40 @@ pub fn run() {
                 let sc = handle.state::<Sc>();
                 let _ = sc.client_id(false).await;
             });
+
+            // When a track ends by itself and the next one is already buffered, start it right away
+            // instead of waiting for the UI to notice. The UI follows via player_state.
+            let watcher = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(40));
+                let st = watcher.state::<Player>();
+                let mut g = st.0.lock().unwrap();
+                let ended = match g.active.as_mut() {
+                    Some(a) => matches!(a.child.try_wait(), Ok(Some(_))),
+                    None => false,
+                };
+                if !ended {
+                    continue;
+                }
+                if let Some(mut n) = g.next.take() {
+                    let alive = matches!(n.child.try_wait(), Ok(None));
+                    if alive
+                        && mpv_send(SOCKS[n.slot], "{\"command\":[\"set_property\",\"pause\",false]}").is_ok()
+                    {
+                        kill_slot(g.active.take());
+                        g.active = Some(n);
+                    } else {
+                        kill_slot(Some(n));
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             search, related, get_track, play, preload, toggle_pause, stop,
             player_state, seek, start_drag, win_minimize, win_toggle_max, win_close,
-            set_zoom, library_load, library_save, library_path, export_file
+            set_zoom, library_load, library_save, library_path, export_file,
+            local_import, local_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquatica");

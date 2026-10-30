@@ -17,10 +17,10 @@
   --bg-filter: blur(48px) brightness(0.5) saturate(1.3);
 
   --content-max: 920px;
-  --sidebar-w: 216px;
+  --sidebar-w: 232px;
   /* height of the strip above the two panels (brand + window buttons live here) */
   --top: 38px;
-  --font: "Helvetica Neue", Helvetica, "Nimbus Sans", "Nimbus Sans L", "Liberation Sans", Arial, sans-serif;
+  --font: "SF Pro Display", "Inter", -apple-system, system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; -webkit-user-select: none; user-select: none; }
@@ -120,19 +120,29 @@ svg.fill { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; 
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 0 12px 14px;
+  padding: var(--top) 12px 14px 46px;
 }
-/* wordmark zone: taller than the panel strip so the name has room away from the rounded corner */
-.sb-top { display: flex; align-items: center; height: 58px; padding-left: 12px; }
+/* vertical wordmark along the left edge. Move it to the top with --brand-anchor: flex-start */
+.rail {
+  position: absolute;
+  left: 0; top: var(--top); bottom: 14px;
+  width: 46px;
+  display: flex; justify-content: center;
+  align-items: var(--brand-anchor, flex-end);
+  padding: 8px 0;
+  pointer-events: none;
+}
 .brand {
   font-family: var(--font);
   font-weight: 600;
-  font-size: 25px;
+  font-size: var(--brand-size, 30px);
   line-height: 1;
-  letter-spacing: -0.045em;
+  letter-spacing: -0.04em;
   text-transform: lowercase;
-  /* nudge the wordmark here if it still looks off */
-  transform: translate(var(--brand-x, 0px), var(--brand-y, 0px));
+  white-space: nowrap;
+  /* reads bottom to top */
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
 }
 .sb-bottom { margin-top: auto; }
 

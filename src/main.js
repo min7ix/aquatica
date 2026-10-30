@@ -66,7 +66,22 @@ const DOTS =
 const tiny = (u) => u.replace("-t300x300", "-t67x67"); // cheap, stretched = soft
 const big = (u) => u.replace("-t300x300", "-t500x500");
 // the small version of a track we keep in local storage (stream info is fetched fresh on play)
-const slim = (t) => ({ id: t.id, title: t.title, artist: t.artist, artwork: t.artwork, duration: t.duration });
+const slim = (t) => {
+  const o = { id: t.id, title: t.title, artist: t.artist, artwork: t.artwork, duration: t.duration };
+  if (t.local) {
+    o.local = true;
+    o.file = t.file;
+  }
+  return o;
+};
+
+// music-note tile shown for your own files (they have no artwork)
+const NOTE_ART =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3b404c"/><stop offset="1" stop-color="#16181d"/></linearGradient></defs><rect width="200" height="200" fill="url(#g)"/><path d="M94 140V70l52-14v70" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="9" stroke-linejoin="round"/><circle cx="78" cy="140" r="17" fill="rgba(255,255,255,0.55)"/><circle cx="130" cy="126" r="17" fill="rgba(255,255,255,0.55)"/></svg>'
+  );
+const artOf = (t) => t.artwork || (t.local ? NOTE_ART : null);
 
 function fmt(sec) {
   if (!sec || sec < 0) return "0:00";
@@ -401,6 +416,10 @@ function openTrackMenu(x, y, t, list, i, playlistId, anchor = null) {
       { label: "Remove from this playlist", danger: true, run: () => removeFromPlaylist(playlistId, t) }
     );
   }
+  if (t.local) {
+    if (!playlistId) items.push({ sep: true });
+    items.push({ label: "Delete from my music\u2026", danger: true, keep: true, run: () => confirmDeleteLocal(t) });
+  }
   openMenu(x, y, items, anchor);
 }
 
@@ -461,7 +480,8 @@ function row(t, list, i, compact, playlistId) {
   const img = make("img", "art");
   img.alt = "";
   img.loading = "lazy";
-  if (t.artwork) img.src = t.artwork;
+  const art = artOf(t);
+  if (art) img.src = art;
   const info = make("div", "info");
   info.append(make("div", "title", t.title), make("div", "artist", t.artist));
   li.append(img, info);
@@ -492,7 +512,8 @@ function card(t, list, i) {
   const img = make("img", "cover");
   img.alt = "";
   img.loading = "lazy";
-  if (t.artwork) img.src = t.artwork;
+  const art = artOf(t);
+  if (art) img.src = art;
   c.append(img, make("div", "title", t.title), make("div", "artist", t.artist));
   c.addEventListener("click", () => playFrom(list, i));
   c.addEventListener("contextmenu", (e) => {
@@ -537,6 +558,7 @@ function renderRecents() {
 
 /* ---------- likes (stored locally, newest first) ---------- */
 let likes = []; // loaded from the library file (see loadLibrary)
+let localTracks = []; // your own files, newest first (the files themselves live in the app's music folder)
 const isLiked = (t) => !!t && likes.some((l) => l.id === t.id);
 
 function updateLikeButton() {
@@ -759,13 +781,63 @@ $("pl-delete").addEventListener("click", () => {
   toast("Playlist deleted");
 });
 
+/* ---------- my music (files you added) ---------- */
+function renderMusic() {
+  $("music-list").replaceChildren(...localTracks.map((t, i) => row(t, localTracks, i, false)));
+  $("music-status").textContent = localTracks.length
+    ? ""
+    : "No music yet. Add audio files from your computer and they play here without internet.";
+  markActive();
+}
+
+$("music-add").addEventListener("click", async () => {
+  try {
+    const added = await invoke("local_import");
+    if (!added.length) return; // dialog cancelled
+    localTracks = [...added, ...localTracks];
+    saveLibrary();
+    renderMusic();
+    toast(`Added ${added.length} ${added.length === 1 ? "track" : "tracks"}`);
+  } catch (err) {
+    toast(`Couldn't add music: ${err}`);
+  }
+});
+
+function confirmDeleteLocal(t) {
+  openMenu(
+    menuPos.x,
+    menuPos.y,
+    [
+      { title: "Delete this file?" },
+      { label: "Delete", danger: true, run: () => deleteLocal(t) },
+      { label: "Cancel", run: () => {} },
+    ],
+    menuAnchor
+  );
+}
+
+// removes the file, the entry, and any likes / playlist spots it had
+function deleteLocal(t) {
+  invoke("local_delete", { file: t.file }).catch(() => {});
+  localTracks = localTracks.filter((x) => x.id !== t.id);
+  likes = likes.filter((x) => x.id !== t.id);
+  playlists.forEach((p) => {
+    p.tracks = p.tracks.filter((x) => x.id !== t.id);
+  });
+  saveLibrary();
+  renderMusic();
+  renderLikes();
+  renderPlaylists();
+  toast("Deleted");
+}
+
 /* ---------- library file: likes, playlists and covers ---------- */
 let libraryChecked = false; // have we tried to load the file yet?
 let libraryReady = false; // loaded OK, so it is safe to write
 let saving = false;
 let dirty = false;
 
-const snapshot = () => ({ app: "aquatica", version: 1, likes, playlists });
+const snapshot = () => ({ app: "aquatica", version: 1, likes, playlists, local: localTracks });
 
 // Saves are serialized and always write the newest state, so two quick changes can't land out of order.
 function saveLibrary() {
@@ -791,13 +863,19 @@ function cleanTrack(t) {
   if (!t || typeof t !== "object") return null;
   const id = Number(t.id);
   if (!Number.isFinite(id) || typeof t.title !== "string") return null;
-  return {
+  const out = {
     id,
     title: t.title,
     artist: typeof t.artist === "string" ? t.artist : "",
     artwork: typeof t.artwork === "string" && t.artwork.startsWith("https://") ? t.artwork : null,
     duration: Number.isFinite(t.duration) ? t.duration : null,
   };
+  // your own files: only the generated names the app itself creates are accepted
+  if (t.local === true && typeof t.file === "string" && /^[0-9]+\.[A-Za-z0-9]+$/.test(t.file)) {
+    out.local = true;
+    out.file = t.file;
+  }
+  return out;
 }
 const cleanTracks = (list) =>
   (Array.isArray(list) ? list : []).map(cleanTrack).filter(Boolean).slice(0, 5000);
@@ -834,6 +912,7 @@ async function loadLibrary() {
     if (data) {
       likes = cleanTracks(data.likes);
       playlists = cleanPlaylists(data.playlists);
+      localTracks = cleanTracks(data.local).filter((t) => t.local);
       libraryReady = true;
       return;
     }
@@ -860,6 +939,7 @@ async function loadLibrary() {
     libraryChecked = true;
     renderLikes();
     renderPlaylists();
+    renderMusic();
   }
 }
 
@@ -886,7 +966,14 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 // Import only adds things. Same playlist id = fill in what's missing; new id = new playlist.
 function mergeLibrary(data) {
-  const r = { likes: 0, playlists: 0, tracks: 0 };
+  const r = { likes: 0, playlists: 0, tracks: 0, music: 0 };
+  const mine_ = new Set(localTracks.map((l) => l.id));
+  for (const t of cleanTracks(data.local)) {
+    if (!t.local || mine_.has(t.id)) continue;
+    localTracks.push(t);
+    mine_.add(t.id);
+    r.music++;
+  }
   const known = new Set(likes.map((l) => l.id));
   for (const t of cleanTracks(data.likes)) {
     if (known.has(t.id)) continue;
@@ -935,11 +1022,13 @@ $("import-file").addEventListener("change", async (e) => {
   }
   if (!data || data.app !== "aquatica") return toast("That doesn't look like an Aquatica export");
   const r = mergeLibrary(data);
-  if (!r.likes && !r.playlists && !r.tracks) return toast("Nothing new in that file");
+  if (!r.likes && !r.playlists && !r.tracks && !r.music) return toast("Nothing new in that file");
   saveLibrary();
   renderLikes();
   renderPlaylists();
+  renderMusic();
   const bits = [];
+  if (r.music) bits.push(`${r.music} of your tracks`);
   if (r.likes) bits.push(`${r.likes} liked`);
   if (r.playlists) bits.push(`${r.playlists} ${r.playlists === 1 ? "playlist" : "playlists"}`);
   if (r.tracks) bits.push(`${r.tracks} playlist ${r.tracks === 1 ? "track" : "tracks"}`);
@@ -961,6 +1050,7 @@ let waited = 0;
 let gen = 0; // bumps on every new track so stale polls are ignored
 let dragging = false; // dragging the seek bar
 let duration = 0;
+let idleTicks = 0; // polls in a row where nothing was playing
 let preloadedId = null; // id of the track we asked the backend to buffer
 let preloadTimer;
 
@@ -982,12 +1072,13 @@ function showNowPlaying(t) {
   bigArtist.textContent = t.artist;
   currentArt = t.artwork || null;
 
-  if (t.artwork) {
+  const art = artOf(t);
+  if (art) {
     bigArt.onerror = () => {
       bigArt.onerror = null;
-      bigArt.src = t.artwork;
+      bigArt.src = art;
     };
-    bigArt.src = big(t.artwork);
+    bigArt.src = big(art);
     bigArt.hidden = false;
   } else {
     bigArt.hidden = true;
@@ -1003,6 +1094,7 @@ async function loadRelated(t) {
   related = [];
   relList.replaceChildren();
   relLabel.hidden = true;
+  if (t.local) return; // suggestions come from SoundCloud, so there are none for your own files
   try {
     const list = await invoke("related", { id: t.id });
     if (my !== relSeq) return;
@@ -1027,13 +1119,14 @@ async function playAt(i) {
   loading = true;
   started = false;
   waited = 0;
+  idleTicks = 0;
   duration = t.duration || 0;
   showNowPlaying(t);
   updateSeek(0);
   markActive();
   setPlaying(true);
   try {
-    if (!t.streamApi) {
+    if (!t.streamApi && !t.local) {
       // came from recent / liked / a playlist: fetch fresh stream info first
       t = await invoke("get_track", { id: t.id });
       if (my !== gen) return;
@@ -1041,7 +1134,7 @@ async function playAt(i) {
       current = t;
     }
     pushRecent(t);
-    await invoke("play", { id: t.id, streamApi: t.streamApi, auth: t.auth });
+    await invoke("play", { id: t.id, streamApi: t.streamApi ?? null, auth: t.auth ?? null, file: t.file ?? null });
     if (my === gen) {
       loadRelated(t);
       schedulePreload();
@@ -1078,13 +1171,13 @@ async function preloadNext(my) {
   if (!t || preloadedId === t.id) return;
   preloadedId = t.id;
   try {
-    if (!t.streamApi) {
+    if (!t.streamApi && !t.local) {
       // slim track (playlist / liked): fetch stream info now, and keep it so playAt can skip this step
       t = await invoke("get_track", { id: t.id });
       if (my !== gen) return;
       p.list[p.i] = t;
     }
-    await invoke("preload", { id: t.id, streamApi: t.streamApi, auth: t.auth });
+    await invoke("preload", { id: t.id, streamApi: t.streamApi ?? null, auth: t.auth ?? null, file: t.file ?? null });
   } catch {
     preloadedId = null; // optional: playback still works without it
   }
@@ -1104,6 +1197,35 @@ function nextTrack() {
   return false;
 }
 
+// The backend started the preloaded track on its own when the last one ended. Catch the UI up.
+function handedOff(id) {
+  let i = queue.findIndex((x, j) => j > index && x.id === id);
+  if (i < 0) {
+    const r = related.findIndex((x) => x.id === id);
+    if (r < 0) return; // not something we know about
+    queue = related.slice(); // we ran off the end of the queue into the suggestions
+    i = r;
+  }
+  const t = queue[i];
+  index = i;
+  current = t;
+  gen++; // anything still in flight for the old track is stale now
+  clearTimeout(preloadTimer);
+  preloadedId = null;
+  loading = false;
+  started = true;
+  waited = 0;
+  idleTicks = 0;
+  duration = t.duration || 0;
+  showNowPlaying(t);
+  updateSeek(0);
+  markActive();
+  setPlaying(true);
+  pushRecent(t);
+  loadRelated(t);
+  schedulePreload();
+}
+
 async function tick() {
   if (index < 0 || loading || dragging) return;
   const my = gen;
@@ -1116,12 +1238,17 @@ async function tick() {
   if (my !== gen || loading) return;
 
   if (s.running) {
+    idleTicks = 0;
+    if (s.track != null && current && s.track !== current.id) return handedOff(s.track);
     started = true;
     setPlaying(!s.paused);
     if (s.duration > 0) duration = s.duration;
     updateSeek(s.position);
   } else if (started) {
-    // mpv exited: the track finished, so move on
+    // mpv exited: the track finished. If the next one was preloaded the backend is already
+    // starting it, so give that a moment before doing it the slow way.
+    if (preloadedId != null && ++idleTicks < 3) return;
+    idleTicks = 0;
     started = false;
     if (!nextTrack()) {
       setPlaying(false);

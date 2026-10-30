@@ -16,7 +16,7 @@
 
       <!-- ===== SIDEBAR ===== -->
       <aside class="sidebar" data-drag>
-        <div class="sb-top"><span class="brand">aquatica</span></div>
+        <div class="rail"><span class="brand">aquatica</span></div>
 
         <nav>
           <button class="nav-item active" data-view="home">
@@ -37,6 +37,10 @@
           <button class="nav-item" data-view="playlists">
             <svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h7" /><circle cx="18" cy="17" r="2.5" /></svg>
             <span>Playlists</span>
+          </button>
+          <button class="nav-item" data-view="music">
+            <svg class="ic" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></svg>
+            <span>My music</span>
           </button>
         </nav>
 
@@ -111,6 +115,18 @@
             </div>
             <div class="inline-status" id="pl-empty"></div>
             <ul id="pl-all" class="list"></ul>
+          </div>
+        </section>
+
+        <!-- MY MUSIC -->
+        <section class="view" id="view-music" hidden>
+          <div class="scroller">
+            <div class="section-head">
+              <h1 class="greeting">My music</h1>
+              <button class="btn-solid" id="music-add">Add music</button>
+            </div>
+            <div class="inline-status" id="music-status"></div>
+            <ul id="music-list" class="list"></ul>
           </div>
         </section>
 
