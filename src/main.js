@@ -83,6 +83,92 @@ const NOTE_ART =
   );
 const artOf = (t) => t.artwork || (t.local ? NOTE_ART : null);
 
+// Cover art of your own files: Rust sends the raw picture embedded in the tags, we shrink it to a
+// 512px square once per session and reuse it everywhere (rows, cards, player, background).
+const localArtUrls = new Map(); // file -> blob URL, or null if the file has no cover
+const localArtJobs = new Map();
+
+function sniffMime(buf) {
+  const b = new Uint8Array(buf, 0, Math.min(4, buf.byteLength));
+  if (b[0] === 0x89 && b[1] === 0x50) return "image/png";
+  if (b[0] === 0xff && b[1] === 0xd8) return "image/jpeg";
+  if (b[0] === 0x47 && b[1] === 0x49) return "image/gif";
+  if (b[0] === 0x52 && b[1] === 0x49) return "image/webp";
+  return "image/jpeg";
+}
+function shrinkToBlobUrl(blob, size) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      const side = Math.min(img.naturalWidth, img.naturalHeight);
+      const out = Math.min(size, side);
+      const c = document.createElement("canvas");
+      c.width = c.height = out;
+      c.getContext("2d").drawImage(
+        img,
+        (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side,
+        0, 0, out, out
+      );
+      URL.revokeObjectURL(url);
+      c.toBlob((b) => resolve(b ? URL.createObjectURL(b) : null), "image/jpeg", 0.88);
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(null);
+    };
+    img.src = url;
+  });
+}
+async function loadLocalArt(file) {
+  try {
+    let buf = await invoke("local_art", { file });
+    if (!(buf instanceof ArrayBuffer)) buf = new Uint8Array(buf).buffer;
+    if (!buf.byteLength) return null;
+    return await shrinkToBlobUrl(new Blob([buf], { type: sniffMime(buf) }), 512);
+  } catch {
+    return null;
+  }
+}
+function localArt(t) {
+  if (!localArtJobs.has(t.file)) {
+    localArtJobs.set(
+      t.file,
+      loadLocalArt(t.file).then((u) => {
+        localArtUrls.set(t.file, u);
+        return u;
+      })
+    );
+  }
+  return localArtJobs.get(t.file);
+}
+
+// only fetch covers for rows/cards that are (nearly) on screen
+const pendingArt = new WeakMap();
+const artObserver = new IntersectionObserver(
+  (entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      artObserver.unobserve(e.target);
+      const run = pendingArt.get(e.target);
+      pendingArt.delete(e.target);
+      if (run) run();
+    }
+  },
+  { rootMargin: "200px" }
+);
+function setLocalArt(img, t) {
+  const hit = localArtUrls.get(t.file);
+  if (hit) {
+    img.src = hit;
+    return;
+  }
+  img.src = NOTE_ART; // placeholder until the real cover arrives (or for files without one)
+  if (hit === null) return; // already checked: no cover in this file
+  pendingArt.set(img, () => localArt(t).then((u) => u && (img.src = u)));
+  artObserver.observe(img);
+}
+
 function fmt(sec) {
   if (!sec || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
@@ -480,8 +566,8 @@ function row(t, list, i, compact, playlistId) {
   const img = make("img", "art");
   img.alt = "";
   img.loading = "lazy";
-  const art = artOf(t);
-  if (art) img.src = art;
+  if (t.local) setLocalArt(img, t);
+  else if (t.artwork) img.src = t.artwork;
   const info = make("div", "info");
   info.append(make("div", "title", t.title), make("div", "artist", t.artist));
   li.append(img, info);
@@ -512,8 +598,8 @@ function card(t, list, i) {
   const img = make("img", "cover");
   img.alt = "";
   img.loading = "lazy";
-  const art = artOf(t);
-  if (art) img.src = art;
+  if (t.local) setLocalArt(img, t);
+  else if (t.artwork) img.src = t.artwork;
   c.append(img, make("div", "title", t.title), make("div", "artist", t.artist));
   c.addEventListener("click", () => playFrom(list, i));
   c.addEventListener("contextmenu", (e) => {
@@ -1085,6 +1171,18 @@ function showNowPlaying(t) {
   }
   updateBackground();
   updateLikeButton();
+  if (t.local) {
+    // swap the placeholder for the real cover as soon as we have it, and let it tint the background too
+    const apply = (u) => {
+      if (!u || !current || current.id !== t.id) return;
+      bigArt.src = u;
+      currentArt = u;
+      updateBackground();
+    };
+    const hit = localArtUrls.get(t.file);
+    if (hit) apply(hit);
+    else localArt(t).then(apply);
+  }
   npEmpty.hidden = true;
   npContent.hidden = false;
 }

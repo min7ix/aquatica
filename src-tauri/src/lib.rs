@@ -720,6 +720,35 @@ async fn local_import(app: tauri::AppHandle) -> Result<Vec<LocalTrack>, String> 
     .map_err(|e| e.to_string())?
 }
 
+// The picture embedded in the file's tags (front cover preferred). Empty if there isn't one.
+fn embedded_cover(path: &Path) -> Option<Vec<u8>> {
+    use lofty::prelude::*;
+    let tagged = lofty::read_from_path(path).ok()?;
+    let mut fallback: Option<Vec<u8>> = None;
+    for tag in tagged.tags() {
+        for pic in tag.pictures() {
+            if pic.pic_type() == lofty::picture::PictureType::CoverFront {
+                return Some(pic.data().to_vec());
+            }
+            if fallback.is_none() {
+                fallback = Some(pic.data().to_vec());
+            }
+        }
+    }
+    fallback
+}
+
+// Raw image bytes go to the webview as a binary response (no base64 / JSON overhead).
+#[tauri::command]
+async fn local_art(app: tauri::AppHandle, file: String) -> Result<tauri::ipc::Response, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<tauri::ipc::Response, String> {
+        let path = local_path(&app, &file)?;
+        Ok(tauri::ipc::Response::new(embedded_cover(&path).unwrap_or_default()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 fn local_delete(app: tauri::AppHandle, file: String) -> Result<(), String> {
     let p = local_path(&app, &file)?;
@@ -813,7 +842,7 @@ pub fn run() {
             search, related, get_track, play, preload, toggle_pause, stop,
             player_state, seek, start_drag, win_minimize, win_toggle_max, win_close,
             set_zoom, library_load, library_save, library_path, export_file,
-            local_import, local_delete
+            local_import, local_delete, local_art
         ])
         .run(tauri::generate_context!())
         .expect("error while running Aquatica");
