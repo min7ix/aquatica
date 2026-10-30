@@ -47,13 +47,21 @@ jobs:
             "https://laboratory.stolendata.net/~djinn/mpv_osx/mpv-arm64-0.40.0.tar.gz" \
             --output "$archive"
           echo "3170fb709defebaba33e9755297d70dc3562220541de54fc3d494a8309ef1260  $archive" | shasum -a 256 --check
-          tar -tzf "$archive" | grep -Fx "mpv.app/Contents/MacOS/mpv"
+          binary_path="$(tar -tzf "$archive" | awk '/(^|\\/)mpv\\.app\\/Contents\\/MacOS\\/mpv$/ { print; exit }')"
+          if [[ -z "$binary_path" ]]; then
+            echo "Could not find the MPV executable in the archive. Archive contents:"
+            tar -tzf "$archive" | sed -n '1,80p'
+            exit 1
+          fi
+          app_path="${binary_path%/Contents/MacOS/mpv}"
+          echo "Found MPV app bundle at: $app_path"
+          tar -xzf "$archive" -C "$RUNNER_TEMP" "$app_path"
           mkdir -p src-tauri/binaries
-          tar -xzf "$archive" --strip-components=3 -C src-tauri/binaries mpv.app/Contents/MacOS/mpv
-          chmod 755 src-tauri/binaries/mpv
-          file src-tauri/binaries/mpv
-          otool -L src-tauri/binaries/mpv
-          src-tauri/binaries/mpv --version
+          cp -R "$RUNNER_TEMP/$app_path" src-tauri/binaries/mpv.app
+          chmod 755 src-tauri/binaries/mpv.app/Contents/MacOS/mpv
+          file src-tauri/binaries/mpv.app/Contents/MacOS/mpv
+          otool -L src-tauri/binaries/mpv.app/Contents/MacOS/mpv
+          src-tauri/binaries/mpv.app/Contents/MacOS/mpv --version
 
       - name: Build Apple Silicon DMG
         run: npm run tauri -- build --config src-tauri/tauri.macos.conf.json --target aarch64-apple-darwin --bundles dmg
