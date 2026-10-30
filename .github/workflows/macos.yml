@@ -1,17 +1,24 @@
-
-name: Build Aquatica for macOS
+name: Build Aquatica for Apple Silicon macOS
 
 on:
   push:
+    branches:
+      - main
+      - macos-support
     tags:
       - "macos-test-*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build-macos:
-    runs-on: macos-latest
+    # macos-15 is a native Apple Silicon (arm64) GitHub-hosted runner.
+    runs-on: macos-15
 
     steps:
       - name: Check out repository
@@ -31,18 +38,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build and publish macOS package
-        uses: tauri-apps/tauri-action@v1
+      - name: Build Apple Silicon DMG
+        run: npm run tauri -- build --target aarch64-apple-darwin --bundles dmg
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Produce an unsigned test build. Distribution still requires signing
+          # and notarization with an Apple Developer identity.
           APPLE_SIGNING_IDENTITY: "-"
-        with:
-          args: "--target aarch64-apple-darwin --bundles dmg"
-          tagName: ${{ github.ref_name }}
-          releaseName: "Aquatica macOS test ${{ github.ref_name }}"
-          releaseBody: |
-            Experimental Apple Silicon build of Aquatica.
 
-            This is an early testing release. Please report any problems.
-          releaseDraft: false
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: aquatica-macos-aarch64
+          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish tagged test release
+        if: startsWith(github.ref, 'refs/tags/macos-test-')
+        uses: softprops/action-gh-release@v2
+        with:
           prerelease: true
+          generate_release_notes: true
+          files: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
